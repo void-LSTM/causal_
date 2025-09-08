@@ -279,7 +279,24 @@ class CSPDataset(Dataset):
             img_array = self.image_transform(img_array)
         
         return img_array
-    
+    def _extract_phi_features(self, image: np.ndarray) -> torch.Tensor:
+        """Extract φ(I^Y) features from image."""
+        # 亮度
+        brightness = np.mean(image)
+        # 对比度  
+        contrast = np.std(image)
+        # 纹理复杂度（梯度幅值）
+        grad_x = np.diff(image, axis=1)
+        grad_y = np.diff(image, axis=0)
+        if grad_x.size > 0 and grad_y.size > 0:
+            # 取最小维度避免索引错误
+            min_h = min(grad_x.shape[0], grad_y.shape[0])
+            min_w = min(grad_x.shape[1], grad_y.shape[1])
+            texture = np.mean(np.sqrt(grad_x[:min_h, :min_w]**2 + grad_y[:min_h, :min_w]**2))
+        else:
+            texture = 0.0
+        
+        return torch.tensor([brightness, contrast, texture], dtype=torch.float32)
     def __len__(self) -> int:
         """Return dataset size."""
         return len(self.split_indices)
@@ -327,7 +344,10 @@ class CSPDataset(Dataset):
         if self.use_I_Y and self.img_Y_dir is not None:
             img_Y = self._load_image(self.img_Y_dir, sample_idx)
             sample['I_Y'] = torch.tensor(img_Y[None, :, :], dtype=torch.float32)  # Add channel dim
-        
+            # 提取φ(I^Y)特征
+            sample['phi_IY'] = self._extract_phi_features(img_Y)
+        else:
+            sample['phi_IY'] = torch.zeros(3, dtype=torch.float32)  # [brightness, contrast, texture]
         # Add scenario info
         sample['scenario'] = self.scenario
         

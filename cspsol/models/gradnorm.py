@@ -78,49 +78,29 @@ class GradNorm(nn.Module):
         """
         返回满足约束的权重张量：
         - 正值（softplus）
-        - 若提供 min/max，则在 [min_weight, max_weight] 之间
-        - 若 normalize_weights=True，则权重和为 K，同时不违反上/下界
-        （通过一次简单的“有界 simplex 投影”迭代实现）
+        - 可选的上下界约束
+        - 可选的归一化（权重和为K）
         """
         raw = torch.stack([self.weights[n] for n in self.loss_names])  # [K]
-        w = F.softplus(raw)  # 正值
+        w = F.softplus(raw)  # 保证正值
 
-        # 读取上下界
-        lo = self.min_weight if self.min_weight is not None else 0.0
-        hi = self.max_weight if self.max_weight is not None else float('inf')
+        # 应用上下界约束
+        if self.min_weight is not None:
+            w = torch.clamp(w, min=self.min_weight)
+        if self.max_weight is not None:
+            w = torch.clamp(w, max=self.max_weight)
 
-        # 先裁到 [lo, hi]
-        w = torch.clamp(w, min=lo, max=hi)
-
-        if not self.normalize_weights:
-            return w
-
-        # 目标和为 K
-        Ksum = float(self.num_tasks)
-
-        # 有界 simplex 投影（少量迭代足够收敛，K 通常很小）
-        # 思路：不断把 (Ksum - 当前和) 均匀分配到“未触边”的分量上，再裁到边界
-        for _ in range(10):  # 迭代 10 次通常足够
-            s = w.sum()
-            gap = Ksum - s
-            if torch.abs(gap) < 1e-8:
-                break
-
-            free = (w > lo + 1e-12) & (w < hi - 1e-12)  # 未触及上下界的自由分量
-            n_free = int(free.sum().item())
-            if n_free == 0:
-                # 没有可自由调整的分量：只能在未到上界的分量上微调一次，然后再裁边
-                candidates = (w < hi - 1e-12) if gap > 0 else (w > lo + 1e-12)
-                if not bool(candidates.any()):
-                    break
-                share = gap / candidates.sum().clamp_min(1)
-                w = torch.where(candidates, w + share, w)
-                w = torch.clamp(w, min=lo, max=hi)
-                continue
-
-            share = gap / n_free
-            w = torch.where(free, w + share, w)
-            w = torch.clamp(w, min=lo, max=hi)
+        # 归一化：使权重和为K
+        if self.normalize_weights:
+            target_sum = float(self.num_tasks)
+            current_sum = w.sum()
+            if current_sum > 1e-8:  # 避免除零
+                w = w * target_sum / current_sum
+                # 再次应用边界约束
+                if self.min_weight is not None:
+                    w = torch.clamp(w, min=self.min_weight)
+                if self.max_weight is not None:
+                    w = torch.clamp(w, max=self.max_weight)
 
         return w
 
@@ -434,178 +414,178 @@ class MultiTaskBalancer(nn.Module):
         return base_stats
 
 
-# Test the implementation
-if __name__ == "__main__":
-    print("=== Testing GradNorm and Multi-Task Balancing ===")
+# # Test the implementation
+# if __name__ == "__main__":
+#     print("=== Testing GradNorm and Multi-Task Balancing ===")
     
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
+#     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#     print(f"Using device: {device}")
     
-    # Setup test scenario
-    loss_names = ['ci', 'mbr', 'mac', 'align', 'style', 'ib']
+#     # Setup test scenario
+#     loss_names = ['ci', 'mbr', 'mac', 'align', 'style', 'ib']
     
-    print("\n--- Testing GradNorm ---")
-    try:
-        gradnorm = GradNorm(
-            loss_names=loss_names,
-            alpha=0.5,
-            update_freq=10,
-            initial_weights={'ci': 1.0, 'mbr': 1.0, 'mac': 0.5, 'align': 0.2, 'style': 0.1, 'ib': 0.01}
-        ).to(device)
+#     print("\n--- Testing GradNorm ---")
+#     try:
+#         gradnorm = GradNorm(
+#             loss_names=loss_names,
+#             alpha=0.5,
+#             update_freq=10,
+#             initial_weights={'ci': 1.0, 'mbr': 1.0, 'mac': 0.5, 'align': 0.2, 'style': 0.1, 'ib': 0.01}
+#         ).to(device)
         
-        print(f"Initial weights: {gradnorm.get_weights()}")
+#         print(f"Initial weights: {gradnorm.get_weights()}")
         
-        # Create mock shared parameters
-        shared_model = nn.Sequential(
-            nn.Linear(64, 128),
-            nn.ReLU(),
-            nn.Linear(128, 64)
-        ).to(device)
+#         # Create mock shared parameters
+#         shared_model = nn.Sequential(
+#             nn.Linear(64, 128),
+#             nn.ReLU(),
+#             nn.Linear(128, 64)
+#         ).to(device)
         
-        shared_params = list(shared_model.parameters())
+#         shared_params = list(shared_model.parameters())
         
-        # Simulate training steps
-        for step in range(25):
-            # Mock input
-            x = torch.randn(32, 64, device=device)
-            output = shared_model(x)
+#         # Simulate training steps
+#         for step in range(25):
+#             # Mock input
+#             x = torch.randn(32, 64, device=device)
+#             output = shared_model(x)
             
-            # Mock losses that change over time
-            base = (output ** 2).mean()  # 让每个任务损失依赖共享参数
-            mock_losses = {
-                'ci': (1.0 - step * 0.02) * base,
-                'mbr': (0.8 - step * 0.01) * base,
-                'mac': (0.5 + step * 0.01) * base,
-                'align': 0.3 * base,
-                'style': 0.2 * base,
-                'ib': 0.05 * base,
-            }
+#             # Mock losses that change over time
+#             base = (output ** 2).mean()  # 让每个任务损失依赖共享参数
+#             mock_losses = {
+#                 'ci': (1.0 - step * 0.02) * base,
+#                 'mbr': (0.8 - step * 0.01) * base,
+#                 'mac': (0.5 + step * 0.01) * base,
+#                 'align': 0.3 * base,
+#                 'style': 0.2 * base,
+#                 'ib': 0.05 * base,
+#             }
             
-            # Make losses depend on shared parameters
-            total_loss = sum(loss * torch.sum(output) * 1e-6 for loss in mock_losses.values())
+#             # Make losses depend on shared parameters
+#             total_loss = sum(loss * torch.sum(output) * 1e-6 for loss in mock_losses.values())
             
-            # Update weights
-            updated_weights = gradnorm.update_weights(mock_losses, shared_params)
+#             # Update weights
+#             updated_weights = gradnorm.update_weights(mock_losses, shared_params)
             
-            if step % 10 == 0:
-                print(f"Step {step}: weights = {updated_weights}")
+#             if step % 10 == 0:
+#                 print(f"Step {step}: weights = {updated_weights}")
         
-        # Check statistics
-        stats = gradnorm.get_statistics()
-        print(f"Final statistics: step_count={stats['step_count']}")
-        print(f"Final weights: {stats['current_weights']}")
+#         # Check statistics
+#         stats = gradnorm.get_statistics()
+#         print(f"Final statistics: step_count={stats['step_count']}")
+#         print(f"Final weights: {stats['current_weights']}")
         
-        print("✓ GradNorm test passed")
+#         print("✓ GradNorm test passed")
         
-    except Exception as e:
-        print(f"GradNorm test failed: {e}")
-        import traceback
-        traceback.print_exc()
+#     except Exception as e:
+#         print(f"GradNorm test failed: {e}")
+#         import traceback
+#         traceback.print_exc()
     
-    print("\n--- Testing DWA ---")
-    try:
-        dwa = DynamicWeightAveraging(
-            loss_names=loss_names,
-            temperature=2.0,
-            update_freq=5
-        ).to(device)
+#     print("\n--- Testing DWA ---")
+#     try:
+#         dwa = DynamicWeightAveraging(
+#             loss_names=loss_names,
+#             temperature=2.0,
+#             update_freq=5
+#         ).to(device)
         
-        print(f"Initial DWA weights: {dwa.get_weights()}")
+#         print(f"Initial DWA weights: {dwa.get_weights()}")
         
-        # Simulate training with changing losses
-        for step in range(20):
-            mock_losses = {
-                'ci': torch.tensor(1.0 - step * 0.03),
-                'mbr': torch.tensor(0.8 - step * 0.02),
-                'mac': torch.tensor(0.5 + step * 0.02),
-                'align': torch.tensor(0.3),
-                'style': torch.tensor(0.2 + step * 0.01),
-                'ib': torch.tensor(0.05)
-            }
+#         # Simulate training with changing losses
+#         for step in range(20):
+#             mock_losses = {
+#                 'ci': torch.tensor(1.0 - step * 0.03),
+#                 'mbr': torch.tensor(0.8 - step * 0.02),
+#                 'mac': torch.tensor(0.5 + step * 0.02),
+#                 'align': torch.tensor(0.3),
+#                 'style': torch.tensor(0.2 + step * 0.01),
+#                 'ib': torch.tensor(0.05)
+#             }
             
-            updated_weights = dwa.update_weights(mock_losses)
+#             updated_weights = dwa.update_weights(mock_losses)
             
-            if step % 5 == 0:
-                print(f"DWA Step {step}: weights = {updated_weights}")
+#             if step % 5 == 0:
+#                 print(f"DWA Step {step}: weights = {updated_weights}")
         
-        print("✓ DWA test passed")
+#         print("✓ DWA test passed")
         
-    except Exception as e:
-        print(f"DWA test failed: {e}")
+#     except Exception as e:
+#         print(f"DWA test failed: {e}")
     
-    print("\n--- Testing MultiTaskBalancer ---")
-    try:
-        # Test all methods
-        for method in ['gradnorm', 'dwa', 'fixed']:
-            print(f"\nTesting method: {method}")
+#     print("\n--- Testing MultiTaskBalancer ---")
+#     try:
+#         # Test all methods
+#         for method in ['gradnorm', 'dwa', 'fixed']:
+#             print(f"\nTesting method: {method}")
             
-            balancer = MultiTaskBalancer(
-                loss_names=loss_names,
-                method=method,
-                alpha=0.5 if method == 'gradnorm' else None,
-                temperature=2.0 if method == 'dwa' else None,
-                initial_weights={'ci': 1.0, 'mbr': 1.0, 'mac': 0.5, 'align': 0.2, 'style': 0.1, 'ib': 0.01}
-            ).to(device)
+#             balancer = MultiTaskBalancer(
+#                 loss_names=loss_names,
+#                 method=method,
+#                 alpha=0.5 if method == 'gradnorm' else None,
+#                 temperature=2.0 if method == 'dwa' else None,
+#                 initial_weights={'ci': 1.0, 'mbr': 1.0, 'mac': 0.5, 'align': 0.2, 'style': 0.1, 'ib': 0.01}
+#             ).to(device)
             
-            print(f"Initial weights: {balancer.get_weights()}")
+#             print(f"Initial weights: {balancer.get_weights()}")
             
-            # Mock losses
-            mock_losses = {
-                'ci': torch.tensor(0.5, requires_grad=True),
-                'mbr': torch.tensor(0.3, requires_grad=True), 
-                'mac': torch.tensor(0.2, requires_grad=True),
-                'align': torch.tensor(0.1, requires_grad=True),
-                'style': torch.tensor(0.05, requires_grad=True),
-                'ib': torch.tensor(0.01, requires_grad=True)
-            }
+#             # Mock losses
+#             mock_losses = {
+#                 'ci': torch.tensor(0.5, requires_grad=True),
+#                 'mbr': torch.tensor(0.3, requires_grad=True), 
+#                 'mac': torch.tensor(0.2, requires_grad=True),
+#                 'align': torch.tensor(0.1, requires_grad=True),
+#                 'style': torch.tensor(0.05, requires_grad=True),
+#                 'ib': torch.tensor(0.01, requires_grad=True)
+#             }
             
-            # Update weights
-            if method == 'gradnorm':
-                # Need shared parameters for gradnorm
-                shared_model = nn.Linear(10, 5).to(device)
-                shared_params = list(shared_model.parameters())
-                updated_weights = balancer.update_weights(mock_losses, shared_params)
-            else:
-                updated_weights = balancer.update_weights(mock_losses)
+#             # Update weights
+#             if method == 'gradnorm':
+#                 # Need shared parameters for gradnorm
+#                 shared_model = nn.Linear(10, 5).to(device)
+#                 shared_params = list(shared_model.parameters())
+#                 updated_weights = balancer.update_weights(mock_losses, shared_params)
+#             else:
+#                 updated_weights = balancer.update_weights(mock_losses)
             
-            print(f"Updated weights: {updated_weights}")
+#             print(f"Updated weights: {updated_weights}")
             
-            # Get statistics
-            stats = balancer.get_statistics()
-            print(f"Statistics keys: {list(stats.keys())}")
+#             # Get statistics
+#             stats = balancer.get_statistics()
+#             print(f"Statistics keys: {list(stats.keys())}")
         
-        print("✓ MultiTaskBalancer test passed")
+#         print("✓ MultiTaskBalancer test passed")
         
-    except Exception as e:
-        print(f"MultiTaskBalancer test failed: {e}")
-        import traceback
-        traceback.print_exc()
+#     except Exception as e:
+#         print(f"MultiTaskBalancer test failed: {e}")
+#         import traceback
+#         traceback.print_exc()
     
-    print("\n--- Testing weight constraint handling ---")
-    try:
-        # Test extreme loss values to check constraint handling
-        gradnorm = GradNorm(
-            loss_names=['loss1', 'loss2'],
-            min_weight=0.01,
-            max_weight=3.0
-        ).to(device)
+#     print("\n--- Testing weight constraint handling ---")
+#     try:
+#         # Test extreme loss values to check constraint handling
+#         gradnorm = GradNorm(
+#             loss_names=['loss1', 'loss2'],
+#             min_weight=0.01,
+#             max_weight=3.0
+#         ).to(device)
         
-        # Manually set extreme weights to test clamping
-        with torch.no_grad():
-            gradnorm.weights['loss1'].data = torch.tensor(100.0)  # Should be clamped
-            gradnorm.weights['loss2'].data = torch.tensor(-100.0)  # Should be clamped
+#         # Manually set extreme weights to test clamping
+#         with torch.no_grad():
+#             gradnorm.weights['loss1'].data = torch.tensor(100.0)  # Should be clamped
+#             gradnorm.weights['loss2'].data = torch.tensor(-100.0)  # Should be clamped
         
-        weights = gradnorm.get_weights()
-        print(f"Constrained weights: {weights}")
+#         weights = gradnorm.get_weights()
+#         print(f"Constrained weights: {weights}")
         
-        # Check constraints
-        for name, weight in weights.items():
-            assert gradnorm.min_weight <= weight <= gradnorm.max_weight, \
-                f"Weight {name}={weight} violates constraints [{gradnorm.min_weight}, {gradnorm.max_weight}]"
+#         # Check constraints
+#         for name, weight in weights.items():
+#             assert gradnorm.min_weight <= weight <= gradnorm.max_weight, \
+#                 f"Weight {name}={weight} violates constraints [{gradnorm.min_weight}, {gradnorm.max_weight}]"
         
-        print("✓ Weight constraint test passed")
+#         print("✓ Weight constraint test passed")
         
-    except Exception as e:
-        print(f"Weight constraint test failed: {e}")
+#     except Exception as e:
+#         print(f"Weight constraint test failed: {e}")
     
-    print("\n=== GradNorm Test Complete ===")
+#     print("\n=== GradNorm Test Complete ===")

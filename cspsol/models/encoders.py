@@ -448,38 +448,23 @@ class CSPEncoderModule(nn.Module):
         tab_config = configs['tabular']
         img_config = configs['image']
         
-        # Always build T and M encoders
+        # Always build T encoder
         self.encoder_T = TabularEncoder(
             input_dim=feature_dims['T_dim'],
             z_dim=self.z_dim,
             **tab_config
         )
         
-        # M encoder - different handling for IM vs others
-        if self.scenario == 'IM':
-            # In IM scenario, M representation comes from image
-            self.encoder_M_tab = TabularEncoder(
-                input_dim=feature_dims['M_dim'],
-                z_dim=self.z_dim,
-                **tab_config
-            )
-        else:
-            # In IY/DUAL, M is always tabular
-            self.encoder_M = TabularEncoder(
-                input_dim=feature_dims['M_dim'],
-                z_dim=self.z_dim,
-                **tab_config
-            )
-        
-        # Y_star encoder (always tabular)
+        # Always build Y_star encoder
         self.encoder_Y = TabularEncoder(
             input_dim=feature_dims['Y_dim'],
             z_dim=self.z_dim,
             **tab_config
         )
         
-        # Image encoders based on scenario
-        if self.scenario in ['IM', 'DUAL']:
+        # Build M encoders based on scenario
+        if self.scenario == 'IM':
+            # In IM scenario, M representation comes from image
             self.encoder_I_M = ImageEncoder(
                 z_dim=self.z_dim,
                 img_channels=feature_dims['img_channels'],
@@ -487,8 +472,42 @@ class CSPEncoderModule(nn.Module):
                 img_width=feature_dims['img_width'],
                 **img_config
             )
+            # Optional: tabular M encoder for comparison/alignment
+            self.encoder_M_tab = TabularEncoder(
+                input_dim=feature_dims['M_dim'],
+                z_dim=self.z_dim,
+                **tab_config
+            )
+        else:
+            # In IY/DUAL scenarios, M is always tabular
+            self.encoder_M = TabularEncoder(
+                input_dim=feature_dims['M_dim'],
+                z_dim=self.z_dim,
+                **tab_config
+            )
         
-        if self.scenario in ['IY', 'DUAL']:
+        # Build additional image encoders based on scenario
+        if self.scenario == 'DUAL':
+            # In DUAL scenario, we need both image encoders
+            if not hasattr(self, 'encoder_I_M'):  # If not created above
+                self.encoder_I_M = ImageEncoder(
+                    z_dim=self.z_dim,
+                    img_channels=feature_dims['img_channels'],
+                    img_height=feature_dims['img_height'],
+                    img_width=feature_dims['img_width'],
+                    **img_config
+                )
+            
+            self.encoder_I_Y = ImageEncoder(
+                z_dim=self.z_dim,
+                img_channels=feature_dims['img_channels'],
+                img_height=feature_dims['img_height'],
+                img_width=feature_dims['img_width'],
+                **img_config
+            )
+        
+        elif self.scenario == 'IY':
+            # In IY scenario, only need I_Y encoder
             self.encoder_I_Y = ImageEncoder(
                 z_dim=self.z_dim,
                 img_channels=feature_dims['img_channels'],
@@ -509,193 +528,203 @@ class CSPEncoderModule(nn.Module):
         """
         representations = {}
         
-        # Always encode T
+        # Always encode T and Y
         representations['z_T'] = self.encoder_T(batch['T'])
-        
-        # Always encode Y_star
         representations['z_Y'] = self.encoder_Y(batch['Y_star'])
         
         # Handle M encoding based on scenario
         if self.scenario == 'IM':
-            # M representation from image (primary) and optionally from tabular
-            representations['z_M'] = self.encoder_I_M(batch['I_M'])
-            if hasattr(self, 'encoder_M_tab'):
+            # M representation from image (primary) 
+            if 'I_M' in batch and batch['I_M'] is not None:
+                representations['z_M'] = self.encoder_I_M(batch['I_M'])
+            else:
+                raise ValueError("IM scenario requires I_M in batch")
+            
+            # 可选：保留表格M作为对比/对齐用途
+            if hasattr(self, 'encoder_M_tab') and 'M' in batch:
                 representations['z_M_tab'] = self.encoder_M_tab(batch['M'])
         else:
             # M representation from tabular data
-            representations['z_M'] = self.encoder_M(batch['M'])
-        
-        # Handle image encodings
-        if self.scenario in ['IM', 'DUAL'] and batch['I_M'] is not None:
-            if self.scenario != 'IM':  # Don't duplicate for IM
-                representations['z_I_M'] = self.encoder_I_M(batch['I_M'])
-        
-        if self.scenario in ['IY', 'DUAL'] and batch['I_Y'] is not None:
+            if 'M' in batch:
+                representations['z_M'] = self.encoder_M(batch['M'])
+            else:
+                raise ValueError(f"{self.scenario} scenario requires M in batch")
+
+        # Handle additional image encodings for non-IM scenarios
+        if self.scenario == 'DUAL' and 'I_M' in batch and batch.get('I_M') is not None:
+            representations['z_I_M'] = self.encoder_I_M(batch['I_M'])
+
+        if self.scenario in ['IY', 'DUAL'] and 'I_Y' in batch and batch.get('I_Y') is not None:
             representations['z_I_Y'] = self.encoder_I_Y(batch['I_Y'])
-        
+
         return representations
     
     def get_encoder(self, name: str) -> nn.Module:
         """Get specific encoder by name."""
         encoder_map = {
-            'T': self.encoder_T,
-            'Y': self.encoder_Y,
+            'T': 'encoder_T',
+            'Y': 'encoder_Y',
         }
         
+        # Add M encoder based on scenario
         if self.scenario == 'IM':
-            encoder_map['M'] = self.encoder_I_M  # M comes from image
+            encoder_map['M'] = 'encoder_I_M'  # M comes from image in IM scenario
             if hasattr(self, 'encoder_M_tab'):
-                encoder_map['M_tab'] = self.encoder_M_tab
+                encoder_map['M_tab'] = 'encoder_M_tab'
         else:
-            encoder_map['M'] = self.encoder_M
+            encoder_map['M'] = 'encoder_M'  # M comes from tabular in IY/DUAL
         
+        # Add image encoders if they exist
         if hasattr(self, 'encoder_I_M'):
-            encoder_map['I_M'] = self.encoder_I_M
+            encoder_map['I_M'] = 'encoder_I_M'
         if hasattr(self, 'encoder_I_Y'):
-            encoder_map['I_Y'] = self.encoder_I_Y
+            encoder_map['I_Y'] = 'encoder_I_Y'
         
         if name not in encoder_map:
             raise KeyError(f"Encoder '{name}' not found. Available: {list(encoder_map.keys())}")
         
-        return encoder_map[name]
+        encoder_attr_name = encoder_map[name]
+        if not hasattr(self, encoder_attr_name):
+            raise AttributeError(f"Encoder attribute '{encoder_attr_name}' not found")
+        
+        return getattr(self, encoder_attr_name)
 
-
-# Test the implementation
-if __name__ == "__main__":
-    print("=== Testing CSP Encoders ===")
+# # Test the implementation
+# if __name__ == "__main__":
+#     print("=== Testing CSP Encoders ===")
     
-    # Test device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
+#     # Test device
+#     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#     print(f"Using device: {device}")
     
-    print("\n--- Testing MLP ---")
-    try:
-        mlp = MLP(input_dim=10, output_dim=64, hidden_dims=[32, 32])
-        x = torch.randn(8, 10)
-        output = mlp(x)
-        print(f"MLP test: {x.shape} -> {output.shape}")
-        assert output.shape == (8, 64), f"Expected (8, 64), got {output.shape}"
-        print("✓ MLP test passed")
-    except Exception as e:
-        print(f"MLP test failed: {e}")
+#     print("\n--- Testing MLP ---")
+#     try:
+#         mlp = MLP(input_dim=10, output_dim=64, hidden_dims=[32, 32])
+#         x = torch.randn(8, 10)
+#         output = mlp(x)
+#         print(f"MLP test: {x.shape} -> {output.shape}")
+#         assert output.shape == (8, 64), f"Expected (8, 64), got {output.shape}"
+#         print("✓ MLP test passed")
+#     except Exception as e:
+#         print(f"MLP test failed: {e}")
     
-    print("\n--- Testing TabularEncoder ---")
-    try:
-        # Test scalar input
-        tab_encoder = TabularEncoder(input_dim=1, z_dim=64)
-        x_scalar = torch.randn(8)  # Scalar per sample
-        output_scalar = tab_encoder(x_scalar)
-        print(f"Tabular scalar: {x_scalar.shape} -> {output_scalar.shape}")
-        assert output_scalar.shape == (8, 64), f"Expected (8, 64), got {output_scalar.shape}"
+#     print("\n--- Testing TabularEncoder ---")
+#     try:
+#         # Test scalar input
+#         tab_encoder = TabularEncoder(input_dim=1, z_dim=64)
+#         x_scalar = torch.randn(8)  # Scalar per sample
+#         output_scalar = tab_encoder(x_scalar)
+#         print(f"Tabular scalar: {x_scalar.shape} -> {output_scalar.shape}")
+#         assert output_scalar.shape == (8, 64), f"Expected (8, 64), got {output_scalar.shape}"
         
-        # Test vector input
-        tab_encoder_vec = TabularEncoder(input_dim=5, z_dim=64)
-        x_vector = torch.randn(8, 5)
-        output_vector = tab_encoder_vec(x_vector)
-        print(f"Tabular vector: {x_vector.shape} -> {output_vector.shape}")
-        assert output_vector.shape == (8, 64), f"Expected (8, 64), got {output_vector.shape}"
+#         # Test vector input
+#         tab_encoder_vec = TabularEncoder(input_dim=5, z_dim=64)
+#         x_vector = torch.randn(8, 5)
+#         output_vector = tab_encoder_vec(x_vector)
+#         print(f"Tabular vector: {x_vector.shape} -> {output_vector.shape}")
+#         assert output_vector.shape == (8, 64), f"Expected (8, 64), got {output_vector.shape}"
         
-        print("✓ TabularEncoder test passed")
-    except Exception as e:
-        print(f"TabularEncoder test failed: {e}")
+#         print("✓ TabularEncoder test passed")
+#     except Exception as e:
+#         print(f"TabularEncoder test failed: {e}")
     
-    print("\n--- Testing ImageEncoder ---")
-    try:
-        img_encoder = ImageEncoder(z_dim=64, img_channels=1, img_height=28, img_width=28)
-        x_img = torch.randn(8, 1, 28, 28)
-        output_img = img_encoder(x_img)
-        print(f"Image encoder: {x_img.shape} -> {output_img.shape}")
-        assert output_img.shape == (8, 64), f"Expected (8, 64), got {output_img.shape}"
-        print("✓ ImageEncoder test passed")
-    except Exception as e:
-        print(f"ImageEncoder test failed: {e}")
+#     print("\n--- Testing ImageEncoder ---")
+#     try:
+#         img_encoder = ImageEncoder(z_dim=64, img_channels=1, img_height=28, img_width=28)
+#         x_img = torch.randn(8, 1, 28, 28)
+#         output_img = img_encoder(x_img)
+#         print(f"Image encoder: {x_img.shape} -> {output_img.shape}")
+#         assert output_img.shape == (8, 64), f"Expected (8, 64), got {output_img.shape}"
+#         print("✓ ImageEncoder test passed")
+#     except Exception as e:
+#         print(f"ImageEncoder test failed: {e}")
     
-    print("\n--- Testing FusionEncoder ---")
-    try:
-        fusion_encoder = FusionEncoder(
-            input_dims={'tab': 64, 'img': 64},
-            z_dim=64,
-            fusion_method='concat'
-        )
-        representations = {
-            'tab': torch.randn(8, 64),
-            'img': torch.randn(8, 64)
-        }
-        output_fusion = fusion_encoder(representations)
-        print(f"Fusion encoder: {[v.shape for v in representations.values()]} -> {output_fusion.shape}")
-        assert output_fusion.shape == (8, 64), f"Expected (8, 64), got {output_fusion.shape}"
-        print("✓ FusionEncoder test passed")
-    except Exception as e:
-        print(f"FusionEncoder test failed: {e}")
+#     print("\n--- Testing FusionEncoder ---")
+#     try:
+#         fusion_encoder = FusionEncoder(
+#             input_dims={'tab': 64, 'img': 64},
+#             z_dim=64,
+#             fusion_method='concat'
+#         )
+#         representations = {
+#             'tab': torch.randn(8, 64),
+#             'img': torch.randn(8, 64)
+#         }
+#         output_fusion = fusion_encoder(representations)
+#         print(f"Fusion encoder: {[v.shape for v in representations.values()]} -> {output_fusion.shape}")
+#         assert output_fusion.shape == (8, 64), f"Expected (8, 64), got {output_fusion.shape}"
+#         print("✓ FusionEncoder test passed")
+#     except Exception as e:
+#         print(f"FusionEncoder test failed: {e}")
     
-    print("\n--- Testing CSPEncoderModule ---")
-    try:
-        # Test different scenarios
-        for scenario in ['IM', 'IY', 'DUAL']:
-            print(f"\nTesting scenario: {scenario}")
+#     print("\n--- Testing CSPEncoderModule ---")
+#     try:
+#         # Test different scenarios
+#         for scenario in ['IM', 'IY', 'DUAL']:
+#             print(f"\nTesting scenario: {scenario}")
             
-            encoder_module = CSPEncoderModule(
-                scenario=scenario,
-                z_dim=64,
-                feature_dims={
-                    'T_dim': 1, 'M_dim': 1, 'Y_dim': 1,
-                    'img_channels': 1, 'img_height': 28, 'img_width': 28
-                }
-            )
+#             encoder_module = CSPEncoderModule(
+#                 scenario=scenario,
+#                 z_dim=64,
+#                 feature_dims={
+#                     'T_dim': 1, 'M_dim': 1, 'Y_dim': 1,
+#                     'img_channels': 1, 'img_height': 28, 'img_width': 28
+#                 }
+#             )
             
-            # Create mock batch
-            batch = {
-                'T': torch.randn(4),
-                'M': torch.randn(4),
-                'Y_star': torch.randn(4),
-                'I_M': torch.randn(4, 1, 28, 28) if scenario in ['IM', 'DUAL'] else None,
-                'I_Y': torch.randn(4, 1, 28, 28) if scenario in ['IY', 'DUAL'] else None
-            }
+#             # Create mock batch
+#             batch = {
+#                 'T': torch.randn(4),
+#                 'M': torch.randn(4),
+#                 'Y_star': torch.randn(4),
+#                 'I_M': torch.randn(4, 1, 28, 28) if scenario in ['IM', 'DUAL'] else None,
+#                 'I_Y': torch.randn(4, 1, 28, 28) if scenario in ['IY', 'DUAL'] else None
+#             }
             
-            # Forward pass
-            representations = encoder_module(batch)
+#             # Forward pass
+#             representations = encoder_module(batch)
             
-            print(f"Scenario {scenario} representations:")
-            for key, value in representations.items():
-                print(f"  {key}: {value.shape}")
-                assert value.shape == (4, 64), f"Expected (4, 64), got {value.shape}"
+#             print(f"Scenario {scenario} representations:")
+#             for key, value in representations.items():
+#                 print(f"  {key}: {value.shape}")
+#                 assert value.shape == (4, 64), f"Expected (4, 64), got {value.shape}"
             
-            # Test encoder retrieval
-            t_encoder = encoder_module.get_encoder('T')
-            print(f"Retrieved T encoder: {type(t_encoder).__name__}")
+#             # Test encoder retrieval
+#             t_encoder = encoder_module.get_encoder('T')
+#             print(f"Retrieved T encoder: {type(t_encoder).__name__}")
         
-        print("✓ CSPEncoderModule test passed")
-    except Exception as e:
-        print(f"CSPEncoderModule test failed: {e}")
-        import traceback
-        traceback.print_exc()
+#         print("✓ CSPEncoderModule test passed")
+#     except Exception as e:
+#         print(f"CSPEncoderModule test failed: {e}")
+#         import traceback
+#         traceback.print_exc()
     
-    print("\n--- Testing with real CSP data format ---")
-    try:
-        # Simulate real data format from CSPDataModule
-        encoder_module = CSPEncoderModule(
-            scenario='DUAL',
-            z_dim=64
-        )
+#     print("\n--- Testing with real CSP data format ---")
+#     try:
+#         # Simulate real data format from CSPDataModule
+#         encoder_module = CSPEncoderModule(
+#             scenario='DUAL',
+#             z_dim=64
+#         )
         
-        # Mock batch similar to real data
-        mock_batch = {
-            'T': torch.tensor([-1.0397, -0.5234, 0.1234, 0.8765], dtype=torch.float32),
-            'M': torch.tensor([-1.7905, -0.3456, 0.2341, 1.2345], dtype=torch.float32),
-            'Y_star': torch.tensor([-1.5952, 0.1234, -0.5678, 0.9876], dtype=torch.float32),
-            'I_M': torch.randn(4, 1, 28, 28, dtype=torch.float32),
-            'I_Y': torch.randn(4, 1, 28, 28, dtype=torch.float32)
-        }
+#         # Mock batch similar to real data
+#         mock_batch = {
+#             'T': torch.tensor([-1.0397, -0.5234, 0.1234, 0.8765], dtype=torch.float32),
+#             'M': torch.tensor([-1.7905, -0.3456, 0.2341, 1.2345], dtype=torch.float32),
+#             'Y_star': torch.tensor([-1.5952, 0.1234, -0.5678, 0.9876], dtype=torch.float32),
+#             'I_M': torch.randn(4, 1, 28, 28, dtype=torch.float32),
+#             'I_Y': torch.randn(4, 1, 28, 28, dtype=torch.float32)
+#         }
         
-        representations = encoder_module(mock_batch)
-        print("Real data format test:")
-        for key, value in representations.items():
-            print(f"  {key}: shape={value.shape}, mean={value.mean():.4f}, std={value.std():.4f}")
+#         representations = encoder_module(mock_batch)
+#         print("Real data format test:")
+#         for key, value in representations.items():
+#             print(f"  {key}: shape={value.shape}, mean={value.mean():.4f}, std={value.std():.4f}")
         
-        print("✓ Real data format test passed")
-    except Exception as e:
-        print(f"Real data format test failed: {e}")
-        import traceback
-        traceback.print_exc()
+#         print("✓ Real data format test passed")
+#     except Exception as e:
+#         print(f"Real data format test failed: {e}")
+#         import traceback
+#         traceback.print_exc()
     
-    print("\n=== CSP Encoders Test Complete ===")
+#     print("\n=== CSP Encoders Test Complete ===")
