@@ -1,0 +1,59 @@
+# Complete configuration for dual-modal (I^M + I^Y) dataset generation
+seed: 42
+n_samples: 50
+q_misc: 30
+splits: {train: 0.8, val: 0.1, test: 0.1}
+
+scm:
+  alpha1: 1.0
+  alpha2: 1.0
+  rho: 0.5           # {0, 0.5, 1.0}
+  delta: 0.0         # 0.1 for leak stress test
+  sigma_T: 0.2
+  sigma_M: 0.2       # {0.1, 0.2, 0.4}
+  sigma_Y: 0.1       # {0.1, 0.2}
+  h1: square         # square/sin/tanh
+  h2: tanh           # tanh/sin/square
+  gamma1: 1.0
+  gamma2: 1.0
+  Y_type: cont       # cont or bin
+
+imaging:
+  use_I_M: true
+  use_I_Y: true
+  s_level: mid       # small/mid/large
+  theta_deg: 25      # rotation angle
+  beta: 0.25         # brightness strength
+  gamma: 0.25        # contrast strength
+  sigma_pix: 0.0     # pixel noise
+  perm_M: 0.0        # permutation ratio for I^M
+  perm_Y: 0.0        # permutation ratio for I^Y
+
+g_sem:
+  method: gauss_cdf   # or minmax
+  clip_quantiles: [0.005, 0.995]
+
+g_style:
+  method: gauss_cdf
+
+mnist:
+  root: ~/.cache/csp_mnist
+  class_uniform: true
+
+ci:
+  method: tigramite_cmi_knn  # or simple_hsic
+  alpha: 0.05
+  knn: 10
+  shuffles: 200
+  standardize: true
+
+mi:
+  method: knn
+  k: 10
+  standardize: true
+
+output:
+  dir: ./CSP-MNIST/cfg_dual_42
+  save_png: true
+  png_optimize: true
+  save_npy_images: false
