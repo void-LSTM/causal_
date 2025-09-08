@@ -1,6 +1,6 @@
 # Complete configuration for dual-modal (I^M + I^Y) dataset generation
 seed: 42
-n_samples: 50
+n_samples: 5000
 q_misc: 30
 splits: {train: 0.8, val: 0.1, test: 0.1}
 
@@ -15,7 +15,7 @@ scm:
   h1: square         # square/sin/tanh
   h2: tanh           # tanh/sin/square
   gamma1: 1.0
-  gamma2: 1.0
+  gamma2: 1.0›
   Y_type: cont       # cont or bin
 
 imaging:
