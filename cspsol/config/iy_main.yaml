@@ -1,0 +1,207 @@
+# IY Scenario Configuration: Image as Outcome (T -> M -> I^Y)
+# Core principle: Image I^Y represents the outcome Y in causal chain
+
+# Experiment metadata
+name: "iy_scenario_main"
+description: "Image as Outcome - T affects visual outcome I^Y through mediator M"
+tags: ["IY", "image_outcome", "visual_result"]
+
+# Data configuration
+data:
+  scenario: "IY"
+  data_dir: "./data/CSP-MNIST"
+  batch_size: 64
+  num_workers: 8
+  pin_memory: true
+  shuffle_train: true
+  val_split: 0.2
+  test_split: 0.1
+  random_seed: 42
+  
+  # Data preprocessing
+  normalize: true
+  standardize: false
+  
+  # Advanced options
+  cache_data: false
+  preload_data: false
+  
+  # Augmentation (style-preserving only)
+  augmentation:
+    enabled: true
+    style_variations: true
+    semantic_preserve: true
+    noise_std: 0.005
+
+# Model architecture configuration
+model:
+  scenario: "IY"
+  z_dim: 128
+  
+  # Feature dimensions
+  feature_dims:
+    T_dim: 1
+    M_dim: 1
+    Y_dim: 1
+    img_channels: 1
+    img_height: 28
+    img_width: 28
+    phi_dim: 3  # [brightness, contrast, texture]
+  
+  # Encoder configurations
+  encoder_config:
+    hidden_dims: [256, 128]
+    activation: "relu"
+    dropout: 0.1
+    batch_norm: true
+    
+    # Image encoder for outcome
+    img_architecture: "small_cnn"
+    img_dropout: 0.1
+  
+  # Loss function configuration  
+  loss_config:
+    ci:
+      enabled: true
+      weight: 1.0
+      y_type: "cont"
+      detach_zm: true
+    mbr:
+      enabled: true
+      weight: 1.0
+      tau: 1.0
+      y_type: "cont"
+    mac:
+      enabled: true
+      weight: 0.7  # Higher weight for image-semantic alignment
+      max_pairs: 4096
+    align:
+      enabled: true
+      weight: 0.4
+      temperature: 0.07
+    style:
+      enabled: true  # Important for IY scenario
+      weight: 0.2
+      style_type: "regression"
+      num_styles: 1
+    ib:
+      enabled: true
+      weight: 5e-4
+      beta: 5e-4
+  
+  # Multi-task loss balancing
+  balancer_config:
+    method: "gradnorm"
+    alpha: 0.5
+    update_freq: 50
+    lr: 0.025
+    initial_weights:
+      ci: 1.0
+      mbr: 1.0
+      mac: 0.7
+      align: 0.4
+      style: 0.2
+      ib: 0.05
+  
+  # GRL configuration for style decoupling
+  grl_config:
+    enabled: true
+    adaptive: true
+    max_alpha: 1.0
+    schedule: "linear"
+    warmup_steps: 1000
+  
+  # Training phase configuration
+  phase_config:
+    warmup1_epochs: 15
+    warmup2_epochs: 25
+    warmup1_losses: ["align", "mac"]
+    warmup2_losses: ["ci", "mbr", "mac", "align"]
+    full_losses: ["ci", "mbr", "mac", "align", "style", "ib"]
+
+# Training configuration
+training:
+  max_epochs: 120  # Longer for IY complexity
+  learning_rate: 8e-4  # Slightly lower for stability
+  weight_decay: 1e-4
+  
+  # Optimizer
+  optimizer: "adamw"
+  optimizer_config:
+    betas: [0.9, 0.999]
+    eps: 1e-8
+  
+  # Learning rate scheduler
+  scheduler: "cosine_warmup_restarts"
+  scheduler_config:
+    warmup_epochs: 10
+    first_cycle_steps: 60
+    cycle_mult: 1.5
+    min_lr: 1e-6
+    eta_min: 1e-6
+  
+  # Training dynamics
+  gradient_clip_val: 3.0  # Lower for stability
+  gradient_clip_algorithm: "norm"
+  accumulate_grad_batches: 1
+  
+  # Mixed precision
+  use_amp: true
+  
+  # Validation and checkpointing
+  val_check_interval: 1.0
+  check_val_every_n_epoch: 1
+  save_every_n_epochs: 10
+  
+  # Early stopping
+  early_stopping_patience: 25
+  early_stopping_metric: "val_total_loss"
+  early_stopping_mode: "min"
+  
+  # Logging
+  log_every_n_steps: 50
+
+# Evaluation configuration
+evaluation:
+  # Metrics to compute
+  compute_cip: true
+  compute_csi: true
+  compute_mbri: true
+  compute_mac: true
+  
+  # Evaluation parameters
+  significance_level: 0.05
+  n_bootstrap: 1000
+  
+  # Output options
+  save_representations: true
+  save_metrics: true
+  save_plots: true
+  
+  # Representation extraction
+  representation_types: ["z_T", "z_M", "z_I_Y", "phi_IY"]
+  
+  # Analysis options
+  detailed_analysis: true
+  compare_baselines: true
+  
+  # IY-specific evaluation
+  phi_analysis: true
+  style_analysis: true
+
+# Experiment setup
+output_dir: "./experiments/iy_main"
+random_seed: 42
+device: "auto"
+
+# Reproducibility
+deterministic: true
+benchmark: false
+
+# Testing configuration
+_test_config:
+  expected_scenario: "IY"
+  expected_z_dim: 128
+  expected_losses: ["ci", "mbr", "mac", "align", "style", "ib"]
+  expected_phases: 3
+  grl_enabled: true

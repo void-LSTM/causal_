@@ -1,0 +1,213 @@
+# DUAL Scenario Configuration: Both Image Types (T -> I^M -> I^Y)
+# Core principle: Both images I^M and I^Y participate in causal chain
+
+# Experiment metadata
+name: "dual_scenario_main"
+description: "Dual Image Scenario - T -> I^M (mediator) -> I^Y (outcome)"
+tags: ["DUAL", "multi_modal", "complex_causal"]
+
+# Data configuration
+data:
+  scenario: "DUAL"
+  data_dir: "./data/CSP-MNIST"
+  batch_size: 48  # Smaller batch for memory efficiency
+  num_workers: 8
+  pin_memory: true
+  shuffle_train: true
+  val_split: 0.2
+  test_split: 0.1
+  random_seed: 42
+  
+  # Data preprocessing
+  normalize: true
+  standardize: false
+  
+  # Advanced options
+  cache_data: true  # Enable caching for complex scenario
+  preload_data: false
+  
+  # Augmentation (conservative for dual images)
+  augmentation:
+    enabled: true
+    cross_modal_consistency: true
+    independent_noise: false
+    noise_std: 0.003
+
+# Model architecture configuration
+model:
+  scenario: "DUAL"
+  z_dim: 256  # Larger for dual complexity
+  
+  # Feature dimensions
+  feature_dims:
+    T_dim: 1
+    M_dim: 1
+    Y_dim: 1
+    img_channels: 1
+    img_height: 28
+    img_width: 28
+    phi_dim: 3
+  
+  # Encoder configurations
+  encoder_config:
+    hidden_dims: [512, 256, 128]  # Deeper for complexity
+    activation: "relu"
+    dropout: 0.15
+    batch_norm: true
+    
+    # Dual image encoders
+    img_architecture: "small_cnn"
+    img_dropout: 0.15
+    shared_img_encoder: false  # Separate encoders for I^M and I^Y
+  
+  # Loss function configuration
+  loss_config:
+    ci:
+      enabled: true
+      weight: 1.5  # Higher weight for complex scenario
+      y_type: "cont"
+      detach_zm: true
+    mbr:
+      enabled: true
+      weight: 1.5
+      tau: 1.2
+      y_type: "cont"
+    mac:
+      enabled: true
+      weight: 0.8
+      max_pairs: 6144  # More pairs for dual images
+    align:
+      enabled: true
+      weight: 0.6  # Important for cross-modal alignment
+      temperature: 0.05  # Lower temperature for tighter alignment
+    style:
+      enabled: true
+      weight: 0.3
+      style_type: "regression"
+      num_styles: 2  # Both image types
+    ib:
+      enabled: true
+      weight: 1e-3
+      beta: 1e-3
+      modal_specific: true  # Different beta for each modality
+  
+  # Multi-task loss balancing
+  balancer_config:
+    method: "gradnorm"
+    alpha: 0.4  # More aggressive balancing
+    update_freq: 40
+    lr: 0.03
+    initial_weights:
+      ci: 1.5
+      mbr: 1.5
+      mac: 0.8
+      align: 0.6
+      style: 0.3
+      ib: 0.1
+  
+  # GRL configuration
+  grl_config:
+    enabled: true
+    adaptive: true
+    max_alpha: 1.5
+    schedule: "exponential"
+    warmup_steps: 1500
+    gamma: 5.0
+  
+  # Training phase configuration
+  phase_config:
+    warmup1_epochs: 20  # Longer warmup for complexity
+    warmup2_epochs: 35
+    warmup1_losses: ["align", "mac"]
+    warmup2_losses: ["ci", "mbr", "mac", "align"]
+    full_losses: ["ci", "mbr", "mac", "align", "style", "ib"]
+
+# Training configuration
+training:
+  max_epochs: 150  # Longer training for dual scenario
+  learning_rate: 5e-4  # Lower lr for stability
+  weight_decay: 2e-4  # Higher regularization
+  
+  # Optimizer
+  optimizer: "adamw"
+  optimizer_config:
+    betas: [0.9, 0.999]
+    eps: 1e-8
+  
+  # Learning rate scheduler
+  scheduler: "cosine_warmup_restarts"
+  scheduler_config:
+    warmup_epochs: 15
+    first_cycle_steps: 75
+    cycle_mult: 1.2
+    min_lr: 5e-7
+    eta_min: 5e-7
+    gamma: 0.95  # Decay max lr between cycles
+  
+  # Training dynamics
+  gradient_clip_val: 2.0  # Aggressive clipping for stability
+  gradient_clip_algorithm: "norm"
+  accumulate_grad_batches: 2  # Gradient accumulation
+  
+  # Mixed precision
+  use_amp: true
+  
+  # Validation and checkpointing
+  val_check_interval: 1.0
+  check_val_every_n_epoch: 1
+  save_every_n_epochs: 15
+  
+  # Early stopping
+  early_stopping_patience: 30
+  early_stopping_metric: "val_total_loss"
+  early_stopping_mode: "min"
+  
+  # Logging
+  log_every_n_steps: 40
+
+# Evaluation configuration
+evaluation:
+  # Metrics to compute
+  compute_cip: true
+  compute_csi: true
+  compute_mbri: true
+  compute_mac: true
+  
+  # Evaluation parameters
+  significance_level: 0.05
+  n_bootstrap: 2000  # More bootstrap for complex scenario
+  
+  # Output options
+  save_representations: true
+  save_metrics: true
+  save_plots: true
+  
+  # Representation extraction
+  representation_types: ["z_T", "z_M", "z_I_M", "z_I_Y", "phi_IY"]
+  
+  # Analysis options
+  detailed_analysis: true
+  compare_baselines: true
+  
+  # DUAL-specific evaluation
+  cross_modal_analysis: true
+  dual_alignment_analysis: true
+  causal_chain_analysis: true
+
+# Experiment setup
+output_dir: "./experiments/dual_main"
+random_seed: 42
+device: "auto"
+
+# Reproducibility
+deterministic: true
+benchmark: false
+
+# Testing configuration
+_test_config:
+  expected_scenario: "DUAL"
+  expected_z_dim: 256
+  expected_losses: ["ci", "mbr", "mac", "align", "style", "ib"]
+  expected_phases: 3
+  grl_enabled: true
+  dual_images: true
