@@ -146,11 +146,45 @@ class CausalAwareModel(nn.Module):
         }
     
     def _get_default_training_phases(self) -> Dict[str, Dict]:
-        """Get default training phase configuration."""
+        """
+        Get default training phase configuration.
+
+        The warmup phase needs at least one differentiable loss to provide
+        gradients for the encoders.  ``LossMAC`` is correlation based and
+        internally detaches tensors, therefore it cannot drive learning by
+        itself.  When other losses such as ``align`` are disabled we fall back
+        to enabling the first available differentiable loss (``ci`` or ``mbr``)
+        so that warmup1 never trains with a zero gradient.  Users can still
+        override this behaviour by supplying ``training_phases`` in the model
+        configuration.
+        """
+
+        # Start with optional losses that are useful for warmup if enabled
+        warmup1_losses: List[str] = []
+        if self.loss_config.get('align', {}).get('enabled'):
+            warmup1_losses.append('align')
+        if self.loss_config.get('mac', {}).get('enabled'):
+            warmup1_losses.append('mac')
+
+        # Ensure at least one differentiable loss (ci or mbr) is present
+        differentiable_candidates = ['ci', 'mbr']
+        if not any(l in warmup1_losses for l in differentiable_candidates):
+            for cand in differentiable_candidates:
+                if self.loss_config.get(cand, {}).get('enabled'):
+                    warmup1_losses.append(cand)
+                    break
+
+        # Fallback – if still empty, include whatever losses are enabled
+        if not warmup1_losses:
+            warmup1_losses = [
+                name for name, cfg in self.loss_config.items()
+                if cfg.get('enabled')
+            ]
+
         return {
             'warmup1': {
                 'epochs': [0, 10],
-                'enabled_losses': ['align', 'mac'],
+                'enabled_losses': warmup1_losses,
                 'use_grl': False,
                 'use_vib': False
             },
@@ -284,12 +318,28 @@ class CausalAwareModel(nn.Module):
                 break
     
     def _get_active_losses(self) -> List[str]:
-        """Get list of losses active in current training phase."""
+        """Get list of losses active in current training phase.
+
+        Raises:
+            RuntimeError: If no differentiable loss is active in the current
+                phase. ``LossMAC`` alone cannot provide gradients as it uses
+                detached tensors.  At least one other loss must be active to
+                enable training.
+        """
         if self.current_phase in self.training_phases:
             enabled_losses = self.training_phases[self.current_phase]['enabled_losses']
-            return [name for name in enabled_losses if name in self.losses]
+            active = [name for name in enabled_losses if name in self.losses]
         else:
-            return list(self.losses.keys())
+            active = list(self.losses.keys())
+        # Verify at least one loss will propagate gradients.  MAC is excluded
+        # because it detaches its inputs for the Spearman correlation
+        differentiable = [l for l in active if l != 'mac']
+        if not differentiable:
+            raise RuntimeError(
+                "No differentiable losses active. Please enable at least one of "
+                "['ci', 'mbr', 'align', 'style', 'ib'] for training."
+            )
+        return active
     
     def forward(self, batch: Dict[str, torch.Tensor], epoch: Optional[int] = None) -> Dict[str, torch.Tensor]:
         """
