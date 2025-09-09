@@ -44,7 +44,9 @@ class CSPDataset(Dataset):
             split: Data split ('train', 'val', 'test')
             scenario: Force scenario ('IM', 'IY', 'DUAL', None for auto-detect)
             normalize_tabular: Whether to normalize tabular features
-            image_transform: Optional image transforms
+            image_transform: Optional callable applied to each image. The
+                transform may accept either a :class:`PIL.Image.Image` or a
+                :class:`torch.Tensor` with pixel values in ``[0, 1]``.
             max_samples: Limit number of samples (for debugging)
             shared_scaler: Pre-fitted scaler for consistent normalization
             shared_valid_cols: Valid column indices for shared scaler
@@ -262,7 +264,13 @@ class CSPDataset(Dataset):
         return self.int_data[indices, col_idx]
     
     def _load_image(self, img_dir: Path, sample_idx: int) -> np.ndarray:
-        """Load single image and convert to array."""
+        """Load single image and convert to array.
+
+        If ``image_transform`` is provided it may expect either a
+        :class:`PIL.Image.Image` or a :class:`torch.Tensor`.  In the latter
+        case the image is first converted to a float tensor in the ``[0, 1]``
+        range before applying the transform.
+        """
         img_path = img_dir / f"{sample_idx:06d}.png"
         
         if not img_path.exists():
@@ -272,11 +280,24 @@ class CSPDataset(Dataset):
         
         # Load image
         img = Image.open(img_path).convert('L')  # Grayscale
-        img_array = np.array(img, dtype=np.float32) / 255.0  # Normalize to [0,1]
+        
         
         # Apply transforms if specified
         if self.image_transform is not None:
-            img_array = self.image_transform(img_array)
+            try:
+                transformed = self.image_transform(img)
+            except Exception:
+                # Fallback: assume transform expects tensor input
+                img_tensor = torch.from_numpy(np.array(img, dtype=np.float32) / 255.0)
+                transformed = self.image_transform(img_tensor)
+
+            if isinstance(transformed, torch.Tensor):
+                img_array = transformed.squeeze().detach().cpu().numpy()
+            else:
+                img_array = np.array(transformed, dtype=np.float32)
+        else:
+            img_array = np.array(img, dtype=np.float32) / 255.0  # Normalize to [0,1]
+
         
         return img_array
     def _extract_phi_features(self, image: np.ndarray) -> torch.Tensor:
@@ -608,81 +629,81 @@ class CSPDataModule:
         return self.train_dataset.get_class_weights()
 
 
-# # Test the implementation
-# if __name__ == "__main__":
-#     print("=== Testing CSP Data Module (Fixed Version) ===")
+# Test the implementation
+if __name__ == "__main__":
+    print("=== Testing CSP Data Module (Fixed Version) ===")
     
-#     # Test with CSP-MNIST dataset
-#     data_dir = "csp_synth/CSP-MNIST/cfg_dual_42"
+    # Test with CSP-MNIST dataset
+    data_dir = "csp_synth/CSP-MNIST/cfg_dual_42"
     
-#     print(f"\n--- Testing CSPDataset ---")
-#     try:
-#         # Test individual dataset
-#         dataset = CSPDataset(
-#             data_dir=data_dir,
-#             split='train',
-#             scenario=None,  # Auto-detect
-#             normalize_tabular=True,
-#             max_samples=10  # Small sample for testing
-#         )
+    print(f"\n--- Testing CSPDataset ---")
+    try:
+        # Test individual dataset
+        dataset = CSPDataset(
+            data_dir=data_dir,
+            split='train',
+            scenario=None,  # Auto-detect
+            normalize_tabular=True,
+            max_samples=10  # Small sample for testing
+        )
         
-#         print(f"Dataset length: {len(dataset)}")
-#         print(f"Scenario: {dataset.scenario}")
-#         print(f"Feature dims: {dataset.get_feature_dims()}")
+        print(f"Dataset length: {len(dataset)}")
+        print(f"Scenario: {dataset.scenario}")
+        print(f"Feature dims: {dataset.get_feature_dims()}")
         
-#         # Test single sample
-#         sample = dataset[0]
-#         print(f"\nSample keys: {list(sample.keys())}")
+        # Test single sample
+        sample = dataset[0]
+        print(f"\nSample keys: {list(sample.keys())}")
         
-#         for key, value in sample.items():
-#             if isinstance(value, torch.Tensor):
-#                 print(f"{key}: shape={value.shape}, dtype={value.dtype}, range=[{value.min():.4f}, {value.max():.4f}]")
-#             else:
-#                 print(f"{key}: {value}")
+        for key, value in sample.items():
+            if isinstance(value, torch.Tensor):
+                print(f"{key}: shape={value.shape}, dtype={value.dtype}, range=[{value.min():.4f}, {value.max():.4f}]")
+            else:
+                print(f"{key}: {value}")
         
-#     except Exception as e:
-#         print(f"Dataset test failed: {e}")
-#         import traceback
-#         traceback.print_exc()
+    except Exception as e:
+        print(f"Dataset test failed: {e}")
+        import traceback
+        traceback.print_exc()
     
-#     print(f"\n--- Testing CSPDataModule ---")
-#     try:
-#         # Test data module with validation split handling
-#         datamodule = CSPDataModule(
-#             data_dir=data_dir,
-#             batch_size=4,
-#             num_workers=0,  # No multiprocessing for testing
-#             max_samples=10,
-#             val_split=0.2  # Use 20% of training for validation
-#         )
+    print(f"\n--- Testing CSPDataModule ---")
+    try:
+        # Test data module with validation split handling
+        datamodule = CSPDataModule(
+            data_dir=data_dir,
+            batch_size=4,
+            num_workers=0,  # No multiprocessing for testing
+            max_samples=10,
+            val_split=0.2  # Use 20% of training for validation
+        )
         
-#         print(f"Detected scenario: {datamodule.detected_scenario}")
-#         print(f"Feature dims: {datamodule.get_feature_dims()}")
+        print(f"Detected scenario: {datamodule.detected_scenario}")
+        print(f"Feature dims: {datamodule.get_feature_dims()}")
         
-#         # Test dataloaders
-#         train_loader = datamodule.train_dataloader()
-#         val_loader = datamodule.val_dataloader()
-#         test_loader = datamodule.test_dataloader()
+        # Test dataloaders
+        train_loader = datamodule.train_dataloader()
+        val_loader = datamodule.val_dataloader()
+        test_loader = datamodule.test_dataloader()
         
-#         print(f"Train loader: {len(train_loader)} batches")
-#         print(f"Val loader: {len(val_loader)} batches") 
-#         print(f"Test loader: {len(test_loader)} batches")
+        print(f"Train loader: {len(train_loader)} batches")
+        print(f"Val loader: {len(val_loader)} batches") 
+        print(f"Test loader: {len(test_loader)} batches")
         
-#         # Test single batch
-#         batch = next(iter(train_loader))
-#         print(f"\nBatch keys: {list(batch.keys())}")
+        # Test single batch
+        batch = next(iter(train_loader))
+        print(f"\nBatch keys: {list(batch.keys())}")
         
-#         for key, value in batch.items():
-#             if isinstance(value, torch.Tensor):
-#                 print(f"{key}: shape={value.shape}, dtype={value.dtype}")
-#             else:
-#                 print(f"{key}: {value}")
+        for key, value in batch.items():
+            if isinstance(value, torch.Tensor):
+                print(f"{key}: shape={value.shape}, dtype={value.dtype}")
+            else:
+                print(f"{key}: {value}")
         
-#         print("\n✓ All data module tests passed!")
+        print("\n✓ All data module tests passed!")
         
-#     except Exception as e:
-#         print(f"DataModule test failed: {e}")
-#         import traceback
-#         traceback.print_exc()
+    except Exception as e:
+        print(f"DataModule test failed: {e}")
+        import traceback
+        traceback.print_exc()
     
-#     print("\n=== CSP Data Module Test Complete ===")
+    print("\n=== CSP Data Module Test Complete ===")

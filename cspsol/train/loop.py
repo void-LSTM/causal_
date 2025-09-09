@@ -22,6 +22,7 @@ from collections import defaultdict
 import numpy as np
 from pathlib import Path
 import json
+from cspsol.train.sched import AdaptiveLRScheduler
 
 from ..models.carl import CausalAwareModel
 from ..data.datamodule import CSPDataModule
@@ -520,7 +521,7 @@ class CSPTrainer:
             
             # Update learning rate scheduler
             if self.scheduler:
-                if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                if isinstance(self.scheduler, (optim.lr_scheduler.ReduceLROnPlateau, AdaptiveLRScheduler)):
                     metric_for_scheduler = val_metrics.get('val_total_loss', train_metrics.get('train_total_loss', 0))
                     self.scheduler.step(metric_for_scheduler)
                 else:

@@ -157,7 +157,19 @@ class CosineAnnealingWarmupRestarts(_LRScheduler):
             epoch = self.last_epoch + 1
         
         self.last_epoch = epoch
-        self.step_in_cycle = epoch
+        
+        # Number of steps since last call
+        step = epoch - self.last_epoch
+        
+        self.step_in_cycle += step
+        cycle_steps = self.first_cycle_steps * (self.cycle_mult ** self.cycle)
+
+        # Advance cycle and adjust learning rates when necessary
+        while self.step_in_cycle >= cycle_steps:
+            self.step_in_cycle -= cycle_steps
+            self.cycle += 1
+            self.max_lrs = [max_lr * self.gamma for max_lr in self.max_lrs]
+            cycle_steps = self.first_cycle_steps * (self.cycle_mult ** self.cycle)
         
         for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
             param_group['lr'] = lr
@@ -354,17 +366,21 @@ class AdaptiveLRScheduler(_LRScheduler):
         else:  # mode == 'max' and epsilon_mode == 'abs':
             return a > best + self.threshold
     
-    def step(self, metrics: float, epoch: Optional[int] = None):
-        """
-        Step the scheduler with current metrics.
+    def step(self, metrics: Optional[float] = None, epoch: Optional[int] = None):
+        """Step the scheduler with current metrics.
         
         Args:
-            metrics: Current metric value (e.g., validation loss)
+            metrics: Current metric value (e.g., validation loss). If ``None``,
+                no learning rate adaptation is performed, but ``last_epoch`` is
+                updated to maintain compatibility with standard schedulers.
             epoch: Current epoch number
         """
         if epoch is None:
             epoch = self.last_epoch + 1
         self.last_epoch = epoch
+        
+        if metrics is None:
+            return
         
         if self.best is None:
             self.best = metrics

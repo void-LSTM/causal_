@@ -283,18 +283,12 @@ def check_ci_truth_IY(T: np.ndarray,
         n_images = min(len(I_Y_images), 100)
         sample_images = I_Y_images[:n_images]
         
-        phi_features = phi_readout_batch(sample_images)
-        
-        # Combine features into single array
-        feature_arrays = []
-        for feature_name in ["brightness", "axis_angle", "stroke_density"]:
-            if feature_name in phi_features:
-                feature_arrays.append(phi_features[feature_name])
-        
-        if not feature_arrays:
+        phi_features = phi_readout_batch(sample_images)["phi"]
+
+        if phi_features.size == 0:
             raise ValueError("No features extracted")
         
-        phi_combined = np.column_stack(feature_arrays)
+        phi_combined = phi_features
         
         # Standardize features
         scaler = StandardScaler()
