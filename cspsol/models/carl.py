@@ -291,7 +291,7 @@ class CausalAwareModel(nn.Module):
         else:
             return list(self.losses.keys())
     
-    def forward(self, batch: Dict[str, torch.Tensor], epoch: int = 0) -> Dict[str, torch.Tensor]:
+    def forward(self, batch: Dict[str, torch.Tensor], epoch: Optional[int] = None) -> Dict[str, torch.Tensor]:
         """
         Forward pass through CARL model.
         
@@ -302,8 +302,10 @@ class CausalAwareModel(nn.Module):
         Returns:
             Dictionary containing representations and loss information
         """
-        # Update training phase
-        self._update_training_phase(epoch)
+        
+        # Update training phase only when epoch is provided
+        if epoch is not None:
+            self._update_training_phase(epoch)
         
         # Get representations from encoders
         representations = self.encoders(batch)
@@ -675,7 +677,7 @@ if __name__ == "__main__":
         
         # Test manual phase setting
         model.set_phase('warmup1')
-        outputs_warmup = model(batch, epoch=25)
+        outputs_warmup = model(batch)
         print(f"  Manual phase change: {model.current_phase}")
         
         print("✓ Custom configuration test passed")
