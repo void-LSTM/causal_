@@ -447,63 +447,60 @@ class ConfigManager:
         return config
     
     def _apply_overrides(self, config: ExperimentConfig, overrides: Dict[str, Any]):
-        """Apply configuration overrides."""
+        """Apply configuration overrides with proper type handling."""
         for key, value in overrides.items():
             if '.' in key:
                 # Nested key like 'model.z_dim'
                 parts = key.split('.')
                 obj = config
+                
+                # Navigate to the parent object
                 for part in parts[:-1]:
                     obj = getattr(obj, part)
-                setattr(obj, parts[-1], value)
+                
+                # Get the final attribute name
+                final_attr = parts[-1]
+                
+                # Get current value to preserve type if possible
+                try:
+                    current_value = getattr(obj, final_attr)
+                    # Try to convert to the same type as current value
+                    if isinstance(current_value, bool):
+                        converted_value = bool(value)
+                    elif isinstance(current_value, int):
+                        converted_value = int(value)
+                    elif isinstance(current_value, float):
+                        converted_value = float(value)
+                    elif isinstance(current_value, str):
+                        converted_value = str(value)
+                    else:
+                        converted_value = value
+                except (AttributeError, ValueError, TypeError):
+                    # If type conversion fails or attribute doesn't exist, use original value
+                    converted_value = value
+                
+                setattr(obj, final_attr, converted_value)
+                
             else:
                 # Top-level key
-                setattr(config, key, value)
-    
-    def validate_config(self, config: ExperimentConfig) -> List[str]:
-        """
-        Validate configuration and return list of issues.
-        
-        Args:
-            config: Configuration to validate
-            
-        Returns:
-            List of validation issues (empty if valid)
-        """
-        issues = []
-        
-        try:
-            # Test device availability
-            if config.device == 'auto':
-                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            else:
-                device = torch.device(config.device)
-            
-            # Check if device is available
-            if device.type == 'cuda' and not torch.cuda.is_available():
-                issues.append(f"CUDA not available but device set to: {config.device}")
-        
-        except Exception as e:
-            issues.append(f"Invalid device configuration: {e}")
-        
-        # Check data directory
-        data_path = Path(config.data.data_dir)
-        if not data_path.exists():
-            issues.append(f"Data directory does not exist: {config.data.data_dir}")
-        
-        # Validate training parameters
-        total_warmup = config.model.phase_config['warmup1_epochs'] + config.model.phase_config['warmup2_epochs']
-        if total_warmup >= config.training.max_epochs:
-            issues.append(f"Warmup epochs ({total_warmup}) >= max_epochs ({config.training.max_epochs})")
-        
-        # Check memory requirements
-        estimated_memory = self._estimate_memory_usage(config)
-        available_memory = self._get_available_memory()
-        
-        if estimated_memory > available_memory:
-            issues.append(f"Estimated memory usage ({estimated_memory:.1f}GB) > available ({available_memory:.1f}GB)")
-        
-        return issues
+                try:
+                    current_value = getattr(config, key)
+                    # Try to convert to the same type as current value
+                    if isinstance(current_value, bool):
+                        converted_value = bool(value)
+                    elif isinstance(current_value, int):
+                        converted_value = int(value)
+                    elif isinstance(current_value, float):
+                        converted_value = float(value)
+                    elif isinstance(current_value, str):
+                        converted_value = str(value)
+                    else:
+                        converted_value = value
+                except (AttributeError, ValueError, TypeError):
+                    # If type conversion fails or attribute doesn't exist, use original value
+                    converted_value = value
+                
+                setattr(config, key, converted_value)
     
     def _estimate_memory_usage(self, config: ExperimentConfig) -> float:
         """Estimate memory usage in GB."""

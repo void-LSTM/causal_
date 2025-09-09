@@ -15,7 +15,7 @@ scm:
   h1: square         # square/sin/tanh
   h2: tanh           # tanh/sin/square
   gamma1: 1.0
-  gamma2: 1.0›
+  gamma2: 1.0
   Y_type: cont       # cont or bin
 
 imaging:

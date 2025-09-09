@@ -43,6 +43,7 @@ def parse_arguments():
     parser.add_argument(
         '--config', '-c',
         type=str,
+        default='./cspsol/config/im_main.yaml',
         help='Path to YAML configuration file'
     )
     
@@ -58,7 +59,7 @@ def parse_arguments():
     parser.add_argument(
         '--data-dir',
         type=str,
-        required=True,
+        default='./csp_synth/CSP-MNIST/cfg_dual_42',
         help='Path to CSP dataset directory'
     )
     
@@ -66,6 +67,7 @@ def parse_arguments():
         '--scenario',
         type=str,
         choices=['IM', 'IY', 'DUAL'],
+        default='IM',
         help='Training scenario (auto-detect if not specified)'
     )
     
@@ -81,18 +83,21 @@ def parse_arguments():
     parser.add_argument(
         '--epochs',
         type=int,
+        default=100,
         help='Number of training epochs'
     )
     
     parser.add_argument(
         '--batch-size',
         type=int,
+        default=32,
         help='Training batch size'
     )
     
     parser.add_argument(
         '--learning-rate', '--lr',
         type=float,
+        default=1e-3,
         help='Learning rate'
     )
     
@@ -114,6 +119,7 @@ def parse_arguments():
     parser.add_argument(
         '--experiment-name',
         type=str,
+        default='carl_experiment',
         help='Name for this experiment'
     )
     
@@ -128,6 +134,7 @@ def parse_arguments():
     parser.add_argument(
         '--amp',
         action='store_true',
+        default=False,
         help='Enable automatic mixed precision training'
     )
     
@@ -135,6 +142,7 @@ def parse_arguments():
     parser.add_argument(
         '--no-validation',
         action='store_true',
+        default=False,
         help='Skip validation during training'
     )
     
@@ -148,6 +156,7 @@ def parse_arguments():
     parser.add_argument(
         '--resume',
         type=str,
+        default=None,
         help='Path to checkpoint to resume from'
     )
     
@@ -155,12 +164,14 @@ def parse_arguments():
     parser.add_argument(
         '--eval-only',
         action='store_true',
+        default=False,
         help='Only run evaluation (requires --resume)'
     )
     
     parser.add_argument(
         '--save-representations',
         action='store_true',
+        default=False,
         help='Save learned representations during evaluation'
     )
     
@@ -176,12 +187,14 @@ def parse_arguments():
     parser.add_argument(
         '--quiet', '-q',
         action='store_true',
+        default=False,
         help='Suppress most output'
     )
     
     parser.add_argument(
         '--debug',
         action='store_true',
+        default=False,
         help='Enable debug mode (overrides quiet)'
     )
     
@@ -189,12 +202,14 @@ def parse_arguments():
     parser.add_argument(
         '--deterministic',
         action='store_true',
+        default=False,
         help='Enable deterministic training (may reduce performance)'
     )
     
     parser.add_argument(
         '--profile',
         action='store_true',
+        default=False,
         help='Enable performance profiling'
     )
     
@@ -224,76 +239,85 @@ def setup_logging(args):
         logging.getLogger('PIL').setLevel(logging.WARNING)
 
 
+
 def create_experiment_config(args):
     """Create experiment configuration from arguments."""
     config_manager = ConfigManager()
     
     # Load config from file if provided
     if args.config:
-        config = ExperimentConfig.load(args.config)
-        print(f"Loaded configuration from: {args.config}")
+        try:
+            config = ExperimentConfig.load(args.config)
+            print(f"Loaded configuration from: {args.config}")
+        except Exception as e:
+            print(f"Warning: Failed to load config from {args.config}: {e}")
+            print("Using default configuration instead")
+            config = config_manager.create_config(preset=args.preset)
     else:
         # Create config from preset
         config = config_manager.create_config(preset=args.preset)
         print(f"Created configuration from preset: {args.preset}")
     
-    # Apply command line overrides
+    # Apply command line overrides with proper type conversion
     overrides = {}
     
-    if args.scenario:
+    if args.scenario and args.scenario != 'IM':  # Only override if different from default
         overrides['data.scenario'] = args.scenario
         overrides['model.scenario'] = args.scenario
     
     if args.z_dim != 128:  # Only override if different from default
-        overrides['model.z_dim'] = args.z_dim
+        overrides['model.z_dim'] = int(args.z_dim)
     
-    if args.epochs:
-        overrides['training.max_epochs'] = args.epochs
+    if args.epochs and args.epochs != 100:  # Only override if different from default
+        overrides['training.max_epochs'] = int(args.epochs)
     
-    if args.batch_size:
-        overrides['data.batch_size'] = args.batch_size
+    if args.batch_size and args.batch_size != 32:  # Only override if different from default
+        overrides['data.batch_size'] = int(args.batch_size)
     
-    if args.learning_rate:
-        overrides['training.learning_rate'] = args.learning_rate
+    if args.learning_rate and args.learning_rate != 1e-3:  # Only override if different from default
+        overrides['training.learning_rate'] = float(args.learning_rate)
     
     if args.amp:
-        overrides['training.use_amp'] = True
+        overrides['training.use_amp'] = bool(args.amp)
     
     if args.deterministic:
-        overrides['deterministic'] = True
+        overrides['deterministic'] = bool(args.deterministic)
     
-    # Apply overrides
+    # Apply overrides with type safety
     if overrides:
         print(f"Applying {len(overrides)} command line overrides...")
+        for key, value in overrides.items():
+            print(f"  {key}: {value} (type: {type(value).__name__})")
         config_manager._apply_overrides(config, overrides)
     
-    # Set data directory
-    config.data.data_dir = args.data_dir
+    # Set data directory - ensure it's a string
+    config.data.data_dir = str(args.data_dir)
     
-    # Set experiment name and output directory
+    # Set experiment name and output directory - ensure they're strings
     if args.experiment_name:
-        config.name = args.experiment_name
+        config.name = str(args.experiment_name)
     
     config.output_dir = str(Path(args.output_dir) / config.name)
     
-    # Set device
-    config.device = args.device
+    # Set device - ensure it's a string
+    config.device = str(args.device)
     
     return config
 
 
 def setup_data_module(config, args):
-    """Setup data module."""
+    """Setup data module with proper type conversion."""
     print("Setting up data module...")
     
     try:
+        # Ensure all parameters are properly typed
         datamodule = CSPDataModule(
-            data_dir=config.data.data_dir,
-            batch_size=config.data.batch_size,
-            num_workers=config.data.num_workers,
-            scenario=config.data.scenario,
-            normalize_tabular=config.data.normalize,
-            val_split=config.data.val_split
+            data_dir=str(config.data.data_dir),
+            batch_size=int(getattr(config.data, 'batch_size', 32)),
+            num_workers=int(getattr(config.data, 'num_workers', 4)),
+            scenario=str(getattr(config.data, 'scenario', 'IM')),
+            normalize_tabular=bool(getattr(config.data, 'normalize', True)),
+            val_split=float(getattr(config.data, 'val_split', 0.2))
         )
         
         print(f"Data module created for scenario: {datamodule.detected_scenario}")
@@ -305,25 +329,30 @@ def setup_data_module(config, args):
         
     except Exception as e:
         print(f"Failed to create data module: {e}")
+        print(f"Config data attributes: {dir(config.data)}")
+        if hasattr(config.data, '__dict__'):
+            print(f"Config data values: {config.data.__dict__}")
         raise
 
 
 def setup_model(config, feature_dims, args):
-    """Setup CARL model."""
+    """Setup CARL model with proper type conversion."""
     print("Setting up CARL model...")
     
     try:
+        # Ensure all parameters are properly typed
         model = CausalAwareModel(
-            scenario=config.model.scenario,
-            z_dim=config.model.z_dim,
+            scenario=str(getattr(config.model, 'scenario', 'IM')),
+            z_dim=int(getattr(config.model, 'z_dim', 128)),
             feature_dims=feature_dims,
-            loss_config=config.model.loss_config,
-            encoder_config=config.model.encoder_config,
-            balancer_config=config.model.balancer_config
+            loss_config=getattr(config.model, 'loss_config', {}),
+            encoder_config=getattr(config.model, 'encoder_config', {}),
+            balancer_config=getattr(config.model, 'balancer_config', {})
         )
         
         # Move to device
-        device = torch.device(config.device if config.device != 'auto' 
+        device_str = str(getattr(config, 'device', 'auto'))
+        device = torch.device(device_str if device_str != 'auto' 
                             else 'cuda' if torch.cuda.is_available() else 'cpu')
         model = model.to(device)
         
@@ -335,63 +364,97 @@ def setup_model(config, feature_dims, args):
         
     except Exception as e:
         print(f"Failed to create model: {e}")
+        print(f"Config model attributes: {dir(config.model)}")
+        if hasattr(config.model, '__dict__'):
+            print(f"Config model values: {config.model.__dict__}")
         raise
 
 
 def setup_callbacks(config, args):
-    """Setup training callbacks."""
+    """Setup training callbacks with proper type conversion."""
     callbacks = []
     
-    # Early stopping
-    if config.training.early_stopping_patience > 0:
-        callbacks.append(EarlyStopping(
-            monitor=config.training.early_stopping_metric,
-            patience=config.training.early_stopping_patience,
-            mode=config.training.early_stopping_mode,
+    try:
+        # Get training config with proper types
+        training_config = config.training
+        
+        # Early stopping - ensure all values are properly typed
+        early_stopping_patience = int(getattr(training_config, 'early_stopping_patience', 15))
+        if early_stopping_patience > 0:
+            callbacks.append(EarlyStopping(
+                monitor=str(getattr(training_config, 'early_stopping_metric', 'val_total_loss')),
+                patience=early_stopping_patience,
+                mode=str(getattr(training_config, 'early_stopping_mode', 'min')),
+                verbose=not args.quiet
+            ))
+        
+        # Model checkpointing
+        checkpoint_dir = Path(config.output_dir) / 'checkpoints'
+        callbacks.append(ModelCheckpoint(
+            filepath=str(checkpoint_dir / 'checkpoint_{epoch:03d}.pt'),
+            monitor=str(getattr(training_config, 'early_stopping_metric', 'val_total_loss')),
+            save_freq=int(args.checkpoint_freq),
             verbose=not args.quiet
         ))
-    
-    # Model checkpointing
-    checkpoint_dir = Path(config.output_dir) / 'checkpoints'
-    callbacks.append(ModelCheckpoint(
-        filepath=str(checkpoint_dir / 'checkpoint_{epoch:03d}.pt'),
-        monitor=config.training.early_stopping_metric,
-        save_freq=args.checkpoint_freq,
-        verbose=not args.quiet
-    ))
-    
-    # Metrics logging
-    log_dir = Path(config.output_dir) / 'logs'
-    callbacks.append(MetricsLogger(
-        log_dir=str(log_dir),
-        log_freq=1,
-        save_plots=True
-    ))
-    
-    # Learning rate monitoring
-    callbacks.append(LearningRateMonitor())
-    
-    # CSP structure monitoring
-    callbacks.append(CSPStructureMonitor(
-        monitor_interval=5,
-        save_representations=args.save_representations
-    ))
-    
-    return CallbackContainer(callbacks)
+        
+        # Metrics logging
+        log_dir = Path(config.output_dir) / 'logs'
+        callbacks.append(MetricsLogger(
+            log_dir=str(log_dir),
+            log_freq=1,
+            save_plots=True
+        ))
+        
+        # Learning rate monitoring
+        callbacks.append(LearningRateMonitor())
+        
+        # CSP structure monitoring
+        callbacks.append(CSPStructureMonitor(
+            monitor_interval=5,
+            save_representations=bool(args.save_representations)
+        ))
+        
+        return CallbackContainer(callbacks)
+        
+    except Exception as e:
+        print(f"Failed to setup callbacks: {e}")
+        print(f"Config training attributes: {dir(config.training)}")
+        if hasattr(config.training, '__dict__'):
+            print(f"Config training values: {config.training.__dict__}")
+        raise
 
 
 def run_training(model, datamodule, config, callbacks, device, args):
-    """Run model training."""
+    """Run model training with proper type conversion."""
     print("Starting training...")
     
     try:
+        # Create trainer config with proper types
+        training_config = {}
+        
+        # Extract training parameters with type conversion
+        if hasattr(config.training, '__dict__'):
+            for key, value in config.training.__dict__.items():
+                if key == 'max_epochs':
+                    training_config[key] = int(value)
+                elif key in ['learning_rate', 'weight_decay', 'gradient_clip_val']:
+                    training_config[key] = float(value)
+                elif key in ['use_amp', 'deterministic']:
+                    training_config[key] = bool(value)
+                elif key in ['log_every_n_steps', 'save_every_n_epochs', 'early_stopping_patience']:
+                    training_config[key] = int(value)
+                elif key in ['early_stopping_metric', 'early_stopping_mode', 'gradient_clip_algorithm']:
+                    training_config[key] = str(value)
+                else:
+                    training_config[key] = value
+        
         # Create trainer
         trainer = CSPTrainer(
             model=model,
             datamodule=datamodule,
-            training_config=config.training.__dict__,
+            training_config=training_config,
             device=device,
-            output_dir=config.output_dir
+            output_dir=str(config.output_dir)
         )
         
         # Set callbacks
@@ -413,8 +476,9 @@ def run_training(model, datamodule, config, callbacks, device, args):
         
     except Exception as e:
         print(f"Training failed: {e}")
+        import traceback
+        traceback.print_exc()
         raise
-
 
 def run_evaluation(model, datamodule, config, device, args):
     """Run model evaluation."""

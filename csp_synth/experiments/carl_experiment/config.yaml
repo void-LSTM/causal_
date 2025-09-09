@@ -1,0 +1,108 @@
+benchmark: false
+data:
+  augmentation: {}
+  batch_size: 16
+  cache_data: false
+  data_dir: ./csp_synth/CSP-MNIST/cfg_dual_42
+  normalize: true
+  num_workers: 2
+  pin_memory: true
+  preload_data: false
+  random_seed: 42
+  scenario: IM
+  shuffle_train: true
+  standardize: false
+  test_split: 0.1
+  val_split: 0.2
+description: Fast development configuration
+deterministic: true
+device: auto
+evaluation:
+  compare_baselines: false
+  compute_cip: true
+  compute_csi: true
+  compute_mac: true
+  compute_mbri: true
+  detailed_analysis: true
+  n_bootstrap: 1000
+  representation_types:
+  - z_T
+  - z_M
+  - z_Y
+  save_metrics: true
+  save_plots: true
+  save_representations: true
+  significance_level: 0.05
+model:
+  balancer_config:
+    alpha: 1.5
+    lr: 0.025
+    method: gradnorm
+  encoder_config:
+    hidden_dims:
+    - 128
+    - 64
+  feature_dims: null
+  loss_config:
+    align:
+      enabled: true
+      weight: 0.5
+    ci:
+      enabled: true
+      weight: 1.0
+    ib:
+      enabled: false
+      weight: 0.1
+    mac:
+      enabled: true
+      weight: 0.5
+    mbr:
+      enabled: true
+      weight: 1.0
+    style:
+      enabled: false
+      weight: 0.1
+  phase_config:
+    warmup1_epochs: 20
+    warmup1_losses:
+    - mac
+    - align
+    warmup2_epochs: 30
+    warmup2_losses:
+    - ci
+    - mbr
+    - mac
+    - align
+  scenario: IM
+  z_dim: 64
+name: carl_experiment
+output_dir: experiments/carl_experiment
+random_seed: 42
+tags: []
+training:
+  accumulate_grad_batches: 1
+  check_val_every_n_epoch: 1
+  early_stopping_metric: val_total_loss
+  early_stopping_mode: min
+  early_stopping_patience: 15
+  gradient_clip_algorithm: norm
+  gradient_clip_val: 5.0
+  learning_rate: 0.001
+  log_every_n_steps: 5
+  max_epochs: 10
+  optimizer: adamw
+  optimizer_config:
+    betas:
+    - 0.9
+    - 0.999
+    eps: 1.0e-08
+  save_every_n_epochs: 5
+  scheduler: cosine_warmup_restarts
+  scheduler_config:
+    cycle_mult: 1.0
+    first_cycle_steps: 50
+    min_lr: 1.0e-06
+    warmup_epochs: 10
+  use_amp: true
+  val_check_interval: 1.0
+  weight_decay: 0.0001
