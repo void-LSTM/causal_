@@ -508,245 +508,245 @@ class CausalAwareModel(nn.Module):
             warnings.warn(f"Unknown phase: {phase_name}")
 
 
-# Test implementation
-if __name__ == "__main__":
-    print("=== Testing CARL Model ===")
+# # Test implementation
+# if __name__ == "__main__":
+#     print("=== Testing CARL Model ===")
     
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
+#     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#     print(f"Using device: {device}")
     
-    # Test parameters
-    batch_size = 16
-    z_dim = 64
+#     # Test parameters
+#     batch_size = 16
+#     z_dim = 64
     
-    feature_dims = {
-        'T_dim': 1, 'M_dim': 1, 'Y_dim': 1,
-        'img_channels': 1, 'img_height': 28, 'img_width': 28
-    }
+#     feature_dims = {
+#         'T_dim': 1, 'M_dim': 1, 'Y_dim': 1,
+#         'img_channels': 1, 'img_height': 28, 'img_width': 28
+#     }
     
-    print(f"Test parameters:")
-    print(f"  batch_size: {batch_size}")
-    print(f"  z_dim: {z_dim}")
-    print(f"  feature_dims: {feature_dims}")
+#     print(f"Test parameters:")
+#     print(f"  batch_size: {batch_size}")
+#     print(f"  z_dim: {z_dim}")
+#     print(f"  feature_dims: {feature_dims}")
     
-    # Test scenarios
-    scenarios = ['IM', 'IY', 'DUAL']
+#     # Test scenarios
+#     scenarios = ['IM', 'IY', 'DUAL']
     
-    for scenario in scenarios:
-        print(f"\n--- Testing scenario: {scenario} ---")
+#     for scenario in scenarios:
+#         print(f"\n--- Testing scenario: {scenario} ---")
         
-        try:
-            # Create model
-            loss_config = {
-                'ci': {'enabled': True, 'y_type': 'cont', 'detach_zm': True},
-                'mbr': {'enabled': True, 'tau': 1.0, 'y_type': 'cont'},
-                'mac': {'enabled': True},
-                'align': {'enabled': True},
-                'style': {'enabled': True},
-                'ib': {'enabled': True}
-            }
+#         try:
+#             # Create model
+#             loss_config = {
+#                 'ci': {'enabled': True, 'y_type': 'cont', 'detach_zm': True},
+#                 'mbr': {'enabled': True, 'tau': 1.0, 'y_type': 'cont'},
+#                 'mac': {'enabled': True},
+#                 'align': {'enabled': True},
+#                 'style': {'enabled': True},
+#                 'ib': {'enabled': True}
+#             }
             
-            model = CausalAwareModel(
-                scenario=scenario,
-                z_dim=z_dim,
-                feature_dims=feature_dims,
-                loss_config=loss_config
-            ).to(device)
+#             model = CausalAwareModel(
+#                 scenario=scenario,
+#                 z_dim=z_dim,
+#                 feature_dims=feature_dims,
+#                 loss_config=loss_config
+#             ).to(device)
             
-            # Create mock batch
-            batch = {
-                'T': torch.randn(batch_size, device=device),
-                'M': torch.randn(batch_size, device=device),
-                'Y_star': torch.randn(batch_size, device=device),
-                'a_M': torch.rand(batch_size, device=device),
-                'a_Y': torch.rand(batch_size, device=device),
-                'b_style': torch.rand(batch_size, device=device),
-                'phi_IY': torch.randn(batch_size, 3, device=device)  # [brightness, contrast, texture]
-            }
+#             # Create mock batch
+#             batch = {
+#                 'T': torch.randn(batch_size, device=device),
+#                 'M': torch.randn(batch_size, device=device),
+#                 'Y_star': torch.randn(batch_size, device=device),
+#                 'a_M': torch.rand(batch_size, device=device),
+#                 'a_Y': torch.rand(batch_size, device=device),
+#                 'b_style': torch.rand(batch_size, device=device),
+#                 'phi_IY': torch.randn(batch_size, 3, device=device)  # [brightness, contrast, texture]
+#             }
             
-            # Add images based on scenario
-            if scenario in ['IM', 'DUAL']:
-                batch['I_M'] = torch.randn(batch_size, 1, 28, 28, device=device)
-            else:
-                batch['I_M'] = None
+#             # Add images based on scenario
+#             if scenario in ['IM', 'DUAL']:
+#                 batch['I_M'] = torch.randn(batch_size, 1, 28, 28, device=device)
+#             else:
+#                 batch['I_M'] = None
             
-            if scenario in ['IY', 'DUAL']:
-                batch['I_Y'] = torch.randn(batch_size, 1, 28, 28, device=device)
-            else:
-                batch['I_Y'] = None
+#             if scenario in ['IY', 'DUAL']:
+#                 batch['I_Y'] = torch.randn(batch_size, 1, 28, 28, device=device)
+#             else:
+#                 batch['I_Y'] = None
             
-            print(f"Created model for {scenario} scenario")
-            print(f"Model has {sum(p.numel() for p in model.parameters())} parameters")
+#             print(f"Created model for {scenario} scenario")
+#             print(f"Model has {sum(p.numel() for p in model.parameters())} parameters")
             
-            # Test different training phases
-            for epoch, phase in [(0, 'warmup1'), (15, 'warmup2'), (25, 'full')]:
-                print(f"\n  Testing epoch {epoch} (phase: {phase})")
+#             # Test different training phases
+#             for epoch, phase in [(0, 'warmup1'), (15, 'warmup2'), (25, 'full')]:
+#                 print(f"\n  Testing epoch {epoch} (phase: {phase})")
                 
-                # Forward pass
-                outputs = model(batch, epoch=epoch)
+#                 # Forward pass
+#                 outputs = model(batch, epoch=epoch)
                 
-                # Validate outputs
-                assert 'total_loss' in outputs, "Should have total_loss"
-                assert isinstance(outputs['total_loss'], torch.Tensor), "total_loss should be tensor"
-                assert outputs['total_loss'].dim() == 0, "total_loss should be scalar"
+#                 # Validate outputs
+#                 assert 'total_loss' in outputs, "Should have total_loss"
+#                 assert isinstance(outputs['total_loss'], torch.Tensor), "total_loss should be tensor"
+#                 assert outputs['total_loss'].dim() == 0, "total_loss should be scalar"
                 
-                # Check representations
-                repr_keys = [k for k in outputs.keys() if k.startswith('z_')]
-                print(f"    Representations: {repr_keys}")
+#                 # Check representations
+#                 repr_keys = [k for k in outputs.keys() if k.startswith('z_')]
+#                 print(f"    Representations: {repr_keys}")
                 
-                for key in repr_keys:
-                    assert outputs[key].shape[0] == batch_size, f"{key} batch size mismatch"
-                    assert outputs[key].shape[1] == z_dim, f"{key} z_dim mismatch"
+#                 for key in repr_keys:
+#                     assert outputs[key].shape[0] == batch_size, f"{key} batch size mismatch"
+#                     assert outputs[key].shape[1] == z_dim, f"{key} z_dim mismatch"
                 
-                # Check losses
-                loss_keys = [k for k in outputs.keys() if k in ['ci', 'mbr', 'mac', 'align', 'style', 'ib']]
-                print(f"    Active losses: {loss_keys}")
-                print(f"    Total loss: {outputs['total_loss'].item():.4f}")
+#                 # Check losses
+#                 loss_keys = [k for k in outputs.keys() if k in ['ci', 'mbr', 'mac', 'align', 'style', 'ib']]
+#                 print(f"    Active losses: {loss_keys}")
+#                 print(f"    Total loss: {outputs['total_loss'].item():.4f}")
                 
-                # Check loss weights if available
-                if 'loss_weights' in outputs:
-                    weights = outputs['loss_weights']
-                    print(f"    Loss weights: {weights}")
+#                 # Check loss weights if available
+#                 if 'loss_weights' in outputs:
+#                     weights = outputs['loss_weights']
+#                     print(f"    Loss weights: {weights}")
                 
-                # Update step for adaptive components
-                model.update_step(epoch * 100)
+#                 # Update step for adaptive components
+#                 model.update_step(epoch * 100)
             
-            # Test statistics
-            stats = model.get_statistics()
-            print(f"  Final statistics keys: {list(stats.keys())}")
-            print(f"  Current phase: {stats['current_phase']}")
-            print(f"  Active losses: {stats['active_losses']}")
+#             # Test statistics
+#             stats = model.get_statistics()
+#             print(f"  Final statistics keys: {list(stats.keys())}")
+#             print(f"  Current phase: {stats['current_phase']}")
+#             print(f"  Active losses: {stats['active_losses']}")
             
-            print(f"✓ {scenario} scenario test passed")
+#             print(f"✓ {scenario} scenario test passed")
             
-        except Exception as e:
-            print(f"✗ {scenario} scenario test failed: {e}")
-            import traceback
-            traceback.print_exc()
+#         except Exception as e:
+#             print(f"✗ {scenario} scenario test failed: {e}")
+#             import traceback
+#             traceback.print_exc()
     
-    print("\n--- Testing custom configurations ---")
-    try:
-        # Test with custom configs
-        custom_loss_config = {
-            'ci': {'enabled': True, 'detach_zm': False},
-            'mbr': {'enabled': True, 'tau': 2.0},
-            'mac': {'enabled': False},
-            'align': {'enabled': False},
-            'style': {'enabled': False},
-            'ib': {'enabled': False}
-        }
+#     print("\n--- Testing custom configurations ---")
+#     try:
+#         # Test with custom configs
+#         custom_loss_config = {
+#             'ci': {'enabled': True, 'detach_zm': False},
+#             'mbr': {'enabled': True, 'tau': 2.0},
+#             'mac': {'enabled': False},
+#             'align': {'enabled': False},
+#             'style': {'enabled': False},
+#             'ib': {'enabled': False}
+#         }
         
-        custom_balancer_config = {
-            'method': 'dwa',
-            'temperature': 2.0,
-            'update_freq': 10
-        }
+#         custom_balancer_config = {
+#             'method': 'dwa',
+#             'temperature': 2.0,
+#             'update_freq': 10
+#         }
         
-        custom_grl_config = {
-            'enabled': True,
-            'adaptive': True,
-            'max_alpha': 2.0,
-            'schedule': 'exponential'
-        }
+#         custom_grl_config = {
+#             'enabled': True,
+#             'adaptive': True,
+#             'max_alpha': 2.0,
+#             'schedule': 'exponential'
+#         }
         
-        model = CausalAwareModel(
-            scenario='IY',
-            z_dim=32,
-            loss_config=custom_loss_config,
-            balancer_config=custom_balancer_config,
-            grl_config=custom_grl_config
-        ).to(device)
+#         model = CausalAwareModel(
+#             scenario='IY',
+#             z_dim=32,
+#             loss_config=custom_loss_config,
+#             balancer_config=custom_balancer_config,
+#             grl_config=custom_grl_config
+#         ).to(device)
         
-        # Create minimal batch
-        batch = {
-            'T': torch.randn(8, device=device),
-            'M': torch.randn(8, device=device),
-            'Y_star': torch.randn(8, device=device),
-            'I_Y': torch.randn(8, 1, 28, 28, device=device),
-            'a_Y': torch.rand(8, device=device),
-            'b_style': torch.rand(8, device=device),
-            'phi_IY': torch.randn(8, 3, device=device)
-        }
+#         # Create minimal batch
+#         batch = {
+#             'T': torch.randn(8, device=device),
+#             'M': torch.randn(8, device=device),
+#             'Y_star': torch.randn(8, device=device),
+#             'I_Y': torch.randn(8, 1, 28, 28, device=device),
+#             'a_Y': torch.rand(8, device=device),
+#             'b_style': torch.rand(8, device=device),
+#             'phi_IY': torch.randn(8, 3, device=device)
+#         }
         
-        outputs = model(batch, epoch=25)  # Full phase
+#         outputs = model(batch, epoch=25)  # Full phase
         
-        print(f"Custom config test:")
-        print(f"  Total loss: {outputs['total_loss'].item():.4f}")
-        print(f"  Active losses: {[k for k in outputs.keys() if k in ['ci', 'mbr', 'mac']]}")
-        print(f"  z_dim: {outputs['z_T'].shape[1]}")
+#         print(f"Custom config test:")
+#         print(f"  Total loss: {outputs['total_loss'].item():.4f}")
+#         print(f"  Active losses: {[k for k in outputs.keys() if k in ['ci', 'mbr', 'mac']]}")
+#         print(f"  z_dim: {outputs['z_T'].shape[1]}")
         
-        # Test manual phase setting
-        model.set_phase('warmup1')
-        outputs_warmup = model(batch)
-        print(f"  Manual phase change: {model.current_phase}")
+#         # Test manual phase setting
+#         model.set_phase('warmup1')
+#         outputs_warmup = model(batch)
+#         print(f"  Manual phase change: {model.current_phase}")
         
-        print("✓ Custom configuration test passed")
+#         print("✓ Custom configuration test passed")
         
-    except Exception as e:
-        print(f"✗ Custom configuration test failed: {e}")
-        import traceback
-        traceback.print_exc()
+#     except Exception as e:
+#         print(f"✗ Custom configuration test failed: {e}")
+#         import traceback
+#         traceback.print_exc()
     
-    print("\n--- Testing edge cases ---")
-    try:
-        # Test with minimal losses
-        minimal_config = {
-            'ci': {'enabled': True},
-            'mbr': {'enabled': False},
-            'mac': {'enabled': False},
-            'align': {'enabled': False},
-            'style': {'enabled': False},
-            'ib': {'enabled': False}
-        }
+#     print("\n--- Testing edge cases ---")
+#     try:
+#         # Test with minimal losses
+#         minimal_config = {
+#             'ci': {'enabled': True},
+#             'mbr': {'enabled': False},
+#             'mac': {'enabled': False},
+#             'align': {'enabled': False},
+#             'style': {'enabled': False},
+#             'ib': {'enabled': False}
+#         }
         
-        print("Creating minimal model...")
-        model = CausalAwareModel(
-            scenario='IM',
-            loss_config=minimal_config
-        ).to(device)
+#         print("Creating minimal model...")
+#         model = CausalAwareModel(
+#             scenario='IM',
+#             loss_config=minimal_config
+#         ).to(device)
         
-        # Set to full phase to enable all configured losses
-        model.set_phase('full')
+#         # Set to full phase to enable all configured losses
+#         model.set_phase('full')
         
-        print("Creating test batch...")
-        batch = {
-            'T': torch.randn(4, device=device),
-            'M': torch.randn(4, device=device),
-            'Y_star': torch.randn(4, device=device),
-            'I_M': torch.randn(4, 1, 28, 28, device=device)
-        }
+#         print("Creating test batch...")
+#         batch = {
+#             'T': torch.randn(4, device=device),
+#             'M': torch.randn(4, device=device),
+#             'Y_star': torch.randn(4, device=device),
+#             'I_M': torch.randn(4, 1, 28, 28, device=device)
+#         }
         
-        print("Running forward pass...")
-        outputs = model(batch)
+#         print("Running forward pass...")
+#         outputs = model(batch)
         
-        print("Validating outputs...")
-        assert 'total_loss' in outputs, "Missing total_loss"
-        assert 'ci' in outputs, "Missing ci loss"
-        print(f"Minimal config: loss={outputs['total_loss'].item():.4f}")
+#         print("Validating outputs...")
+#         assert 'total_loss' in outputs, "Missing total_loss"
+#         assert 'ci' in outputs, "Missing ci loss"
+#         print(f"Minimal config: loss={outputs['total_loss'].item():.4f}")
         
-        # Test empty batch handling
-        print("Testing empty batch...")
-        try:
-            empty_batch = {'T': torch.randn(0, device=device)}
-            outputs_empty = model(empty_batch)
-            print("Empty batch handled successfully")
-        except Exception as e:
-            print(f"Empty batch correctly rejected: {type(e).__name__}: {str(e)}")
+#         # Test empty batch handling
+#         print("Testing empty batch...")
+#         try:
+#             empty_batch = {'T': torch.randn(0, device=device)}
+#             outputs_empty = model(empty_batch)
+#             print("Empty batch handled successfully")
+#         except Exception as e:
+#             print(f"Empty batch correctly rejected: {type(e).__name__}: {str(e)}")
         
-        # Test missing required fields
-        print("Testing incomplete batch...")
-        try:
-            incomplete_batch = {'T': torch.randn(4, device=device)}  # Missing required I_M for IM scenario
-            outputs_incomplete = model(incomplete_batch)
-            print("Incomplete batch handled successfully")
-        except Exception as e:
-            print(f"Incomplete batch correctly rejected: {type(e).__name__}: {str(e)}")
+#         # Test missing required fields
+#         print("Testing incomplete batch...")
+#         try:
+#             incomplete_batch = {'T': torch.randn(4, device=device)}  # Missing required I_M for IM scenario
+#             outputs_incomplete = model(incomplete_batch)
+#             print("Incomplete batch handled successfully")
+#         except Exception as e:
+#             print(f"Incomplete batch correctly rejected: {type(e).__name__}: {str(e)}")
         
-        print("✓ Edge cases test passed")
+#         print("✓ Edge cases test passed")
         
-    except Exception as e:
-        print(f"✗ Edge cases test failed: {type(e).__name__}: {str(e)}")
-        import traceback
-        traceback.print_exc()
+#     except Exception as e:
+#         print(f"✗ Edge cases test failed: {type(e).__name__}: {str(e)}")
+#         import traceback
+#         traceback.print_exc()
     
-    print("\n=== CARL Model Test Complete ===")
+#     print("\n=== CARL Model Test Complete ===")

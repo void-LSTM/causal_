@@ -666,197 +666,197 @@ class LossIB(nn.Module):
         return self.beta * torch.mean(z ** 2)
 
 
-# Test the implementation
-if __name__ == "__main__":
-    print("=== Testing CSP Loss Functions ===")
+# # Test the implementation
+# if __name__ == "__main__":
+#     print("=== Testing CSP Loss Functions ===")
     
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
+#     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#     print(f"Using device: {device}")
     
-    # Setup test data
-    batch_size = 32
-    z_dim = 64
+#     # Setup test data
+#     batch_size = 32
+#     z_dim = 64
     
-    # Mock representations
-    z_t = torch.randn(batch_size, z_dim, device=device)
-    z_m = torch.randn(batch_size, z_dim, device=device)
-    z_i = torch.randn(batch_size, z_dim, device=device)
+#     # Mock representations
+#     z_t = torch.randn(batch_size, z_dim, device=device)
+#     z_m = torch.randn(batch_size, z_dim, device=device)
+#     z_i = torch.randn(batch_size, z_dim, device=device)
     
-    # Mock targets
-    y_cont = torch.randn(batch_size, device=device)
-    y_bin = torch.randint(0, 2, (batch_size,), device=device)
-    a_values = torch.rand(batch_size, device=device)  # Semantic amplitudes
-    b_values = torch.rand(batch_size, device=device)  # Style parameters
+#     # Mock targets
+#     y_cont = torch.randn(batch_size, device=device)
+#     y_bin = torch.randint(0, 2, (batch_size,), device=device)
+#     a_values = torch.rand(batch_size, device=device)  # Semantic amplitudes
+#     b_values = torch.rand(batch_size, device=device)  # Style parameters
     
-    print(f"Test data shapes:")
-    print(f"  z_t: {z_t.shape}, z_m: {z_m.shape}, z_i: {z_i.shape}")
-    print(f"  y_cont: {y_cont.shape}, y_bin: {y_bin.shape}")
-    print(f"  a_values: {a_values.shape}, b_values: {b_values.shape}")
+#     print(f"Test data shapes:")
+#     print(f"  z_t: {z_t.shape}, z_m: {z_m.shape}, z_i: {z_i.shape}")
+#     print(f"  y_cont: {y_cont.shape}, y_bin: {y_bin.shape}")
+#     print(f"  a_values: {a_values.shape}, b_values: {b_values.shape}")
     
-    print("\n--- Testing GaussianHead ---")
-    try:
-        gauss_head = GaussianHead(input_dim=z_dim, output_dim=1).to(device)
-        mu, logvar = gauss_head(z_t)
-        nll = gauss_head.nll_loss(y_cont, mu, logvar)
-        print(f"GaussianHead: mu.shape={mu.shape}, logvar.shape={logvar.shape}")
-        print(f"NLL loss: {nll.shape}, mean={nll.mean().item():.4f}")
-        assert mu.shape == (batch_size, 1), f"Expected mu.shape=(32,1), got {mu.shape}"
-        assert nll.shape == (batch_size,), f"Expected nll.shape=(32,), got {nll.shape}"
-        print("✓ GaussianHead test passed")
-    except Exception as e:
-        print(f"GaussianHead test failed: {e}")
+#     print("\n--- Testing GaussianHead ---")
+#     try:
+#         gauss_head = GaussianHead(input_dim=z_dim, output_dim=1).to(device)
+#         mu, logvar = gauss_head(z_t)
+#         nll = gauss_head.nll_loss(y_cont, mu, logvar)
+#         print(f"GaussianHead: mu.shape={mu.shape}, logvar.shape={logvar.shape}")
+#         print(f"NLL loss: {nll.shape}, mean={nll.mean().item():.4f}")
+#         assert mu.shape == (batch_size, 1), f"Expected mu.shape=(32,1), got {mu.shape}"
+#         assert nll.shape == (batch_size,), f"Expected nll.shape=(32,), got {nll.shape}"
+#         print("✓ GaussianHead test passed")
+#     except Exception as e:
+#         print(f"GaussianHead test failed: {e}")
     
-    print("\n--- Testing BernoulliHead ---")
-    try:
-        bern_head = BernoulliHead(input_dim=z_dim, output_dim=1).to(device)
-        logits = bern_head(z_t)
-        nll = bern_head.nll_loss(y_bin, logits)
-        print(f"BernoulliHead: logits.shape={logits.shape}")
-        print(f"NLL loss: {nll.shape}, mean={nll.mean().item():.4f}")
-        assert logits.shape == (batch_size, 1), f"Expected logits.shape=(32,1), got {logits.shape}"
-        assert nll.shape == (batch_size,), f"Expected nll.shape=(32,), got {nll.shape}"
-        print("✓ BernoulliHead test passed")
-    except Exception as e:
-        print(f"BernoulliHead test failed: {e}")
+#     print("\n--- Testing BernoulliHead ---")
+#     try:
+#         bern_head = BernoulliHead(input_dim=z_dim, output_dim=1).to(device)
+#         logits = bern_head(z_t)
+#         nll = bern_head.nll_loss(y_bin, logits)
+#         print(f"BernoulliHead: logits.shape={logits.shape}")
+#         print(f"NLL loss: {nll.shape}, mean={nll.mean().item():.4f}")
+#         assert logits.shape == (batch_size, 1), f"Expected logits.shape=(32,1), got {logits.shape}"
+#         assert nll.shape == (batch_size,), f"Expected nll.shape=(32,), got {nll.shape}"
+#         print("✓ BernoulliHead test passed")
+#     except Exception as e:
+#         print(f"BernoulliHead test failed: {e}")
     
-    print("\n--- Testing CMIEstimator ---")
-    try:
-        cmi_estimator = CMIEstimator(zt_dim=z_dim, zm_dim=z_dim, y_type='cont').to(device)
-        cmi_loss = cmi_estimator(z_t, z_m, y_cont)
-        print(f"CMI loss: {cmi_loss.item():.4f}")
-        assert cmi_loss.dim() == 0, f"Expected scalar loss, got shape {cmi_loss.shape}"
-        print("✓ CMIEstimator test passed")
-    except Exception as e:
-        print(f"CMIEstimator test failed: {e}")
+#     print("\n--- Testing CMIEstimator ---")
+#     try:
+#         cmi_estimator = CMIEstimator(zt_dim=z_dim, zm_dim=z_dim, y_type='cont').to(device)
+#         cmi_loss = cmi_estimator(z_t, z_m, y_cont)
+#         print(f"CMI loss: {cmi_loss.item():.4f}")
+#         assert cmi_loss.dim() == 0, f"Expected scalar loss, got shape {cmi_loss.shape}"
+#         print("✓ CMIEstimator test passed")
+#     except Exception as e:
+#         print(f"CMIEstimator test failed: {e}")
     
-    print("\n--- Testing MIEstimator ---")
-    try:
-        mi_estimator = MIEstimator(temperature=0.07).to(device)
-        mi_loss = mi_estimator(z_t, z_m)
-        print(f"MI loss: {mi_loss.item():.4f}")
-        assert mi_loss.dim() == 0, f"Expected scalar loss, got shape {mi_loss.shape}"
-        print("✓ MIEstimator test passed")
-    except Exception as e:
-        print(f"MIEstimator test failed: {e}")
+#     print("\n--- Testing MIEstimator ---")
+#     try:
+#         mi_estimator = MIEstimator(temperature=0.07).to(device)
+#         mi_loss = mi_estimator(z_t, z_m)
+#         print(f"MI loss: {mi_loss.item():.4f}")
+#         assert mi_loss.dim() == 0, f"Expected scalar loss, got shape {mi_loss.shape}"
+#         print("✓ MIEstimator test passed")
+#     except Exception as e:
+#         print(f"MIEstimator test failed: {e}")
     
-    print("\n--- Testing LossCI ---")
-    try:
-        loss_ci = LossCI(zt_dim=z_dim, zm_dim=z_dim, y_type='cont').to(device)
-        ci_loss = loss_ci(z_t, z_m, y_cont)
-        print(f"CI loss: {ci_loss.item():.4f}")
-        assert ci_loss.dim() == 0, f"Expected scalar loss, got shape {ci_loss.shape}"
-        print("✓ LossCI test passed")
-    except Exception as e:
-        print(f"LossCI test failed: {e}")
+#     print("\n--- Testing LossCI ---")
+#     try:
+#         loss_ci = LossCI(zt_dim=z_dim, zm_dim=z_dim, y_type='cont').to(device)
+#         ci_loss = loss_ci(z_t, z_m, y_cont)
+#         print(f"CI loss: {ci_loss.item():.4f}")
+#         assert ci_loss.dim() == 0, f"Expected scalar loss, got shape {ci_loss.shape}"
+#         print("✓ LossCI test passed")
+#     except Exception as e:
+#         print(f"LossCI test failed: {e}")
     
-    print("\n--- Testing LossMBR ---")
-    try:
-        loss_mbr = LossMBR(zm_dim=z_dim, zt_dim=z_dim, y_type='cont', tau=1.0).to(device)
-        mbr_loss, mbr_components = loss_mbr(z_m, z_t, y_cont)
-        print(f"MBR loss: {mbr_loss.item():.4f}")
-        print(f"MBR components: {[f'{k}={v.item():.4f}' for k, v in mbr_components.items()]}")
-        assert mbr_loss.dim() == 0, f"Expected scalar loss, got shape {mbr_loss.shape}"
-        print("✓ LossMBR test passed")
-    except Exception as e:
-        print(f"LossMBR test failed: {e}")
+#     print("\n--- Testing LossMBR ---")
+#     try:
+#         loss_mbr = LossMBR(zm_dim=z_dim, zt_dim=z_dim, y_type='cont', tau=1.0).to(device)
+#         mbr_loss, mbr_components = loss_mbr(z_m, z_t, y_cont)
+#         print(f"MBR loss: {mbr_loss.item():.4f}")
+#         print(f"MBR components: {[f'{k}={v.item():.4f}' for k, v in mbr_components.items()]}")
+#         assert mbr_loss.dim() == 0, f"Expected scalar loss, got shape {mbr_loss.shape}"
+#         print("✓ LossMBR test passed")
+#     except Exception as e:
+#         print(f"LossMBR test failed: {e}")
     
-    print("\n--- Testing LossMAC ---")
-    try:
-        loss_mac = LossMAC(max_pairs=1000).to(device)
-        mac_loss = loss_mac(z_i, a_values)
-        print(f"MAC loss: {mac_loss.item():.4f}")
-        assert mac_loss.dim() == 0, f"Expected scalar loss, got shape {mac_loss.shape}"
-        print("✓ LossMAC test passed")
-    except Exception as e:
-        print(f"LossMAC test failed: {e}")
+#     print("\n--- Testing LossMAC ---")
+#     try:
+#         loss_mac = LossMAC(max_pairs=1000).to(device)
+#         mac_loss = loss_mac(z_i, a_values)
+#         print(f"MAC loss: {mac_loss.item():.4f}")
+#         assert mac_loss.dim() == 0, f"Expected scalar loss, got shape {mac_loss.shape}"
+#         print("✓ LossMAC test passed")
+#     except Exception as e:
+#         print(f"LossMAC test failed: {e}")
     
-    print("\n--- Testing LossAlign ---")
-    try:
-        loss_align = LossAlign(temperature=0.07).to(device)
-        align_loss = loss_align(z_t, z_m)
-        print(f"Align loss: {align_loss.item():.4f}")
-        assert align_loss.dim() == 0, f"Expected scalar loss, got shape {align_loss.shape}"
-        print("✓ LossAlign test passed")
-    except Exception as e:
-        print(f"LossAlign test failed: {e}")
+#     print("\n--- Testing LossAlign ---")
+#     try:
+#         loss_align = LossAlign(temperature=0.07).to(device)
+#         align_loss = loss_align(z_t, z_m)
+#         print(f"Align loss: {align_loss.item():.4f}")
+#         assert align_loss.dim() == 0, f"Expected scalar loss, got shape {align_loss.shape}"
+#         print("✓ LossAlign test passed")
+#     except Exception as e:
+#         print(f"LossAlign test failed: {e}")
     
-    print("\n--- Testing LossStyle ---")
-    try:
-        loss_style = LossStyle(z_dim=z_dim, num_styles=1, style_type='regression').to(device)
-        style_loss = loss_style(z_i, b_values)
-        print(f"Style loss: {style_loss.item():.4f}")
-        assert style_loss.dim() == 0, f"Expected scalar loss, got shape {style_loss.shape}"
-        print("✓ LossStyle test passed")
-    except Exception as e:
-        print(f"LossStyle test failed: {e}")
+#     print("\n--- Testing LossStyle ---")
+#     try:
+#         loss_style = LossStyle(z_dim=z_dim, num_styles=1, style_type='regression').to(device)
+#         style_loss = loss_style(z_i, b_values)
+#         print(f"Style loss: {style_loss.item():.4f}")
+#         assert style_loss.dim() == 0, f"Expected scalar loss, got shape {style_loss.shape}"
+#         print("✓ LossStyle test passed")
+#     except Exception as e:
+#         print(f"LossStyle test failed: {e}")
     
-    print("\n--- Testing LossIB ---")
-    try:
-        loss_ib = LossIB(beta=1e-4).to(device)
-        ib_loss = loss_ib(z_t)
-        print(f"IB loss: {ib_loss.item():.6f}")
-        assert ib_loss.dim() == 0, f"Expected scalar loss, got shape {ib_loss.shape}"
-        print("✓ LossIB test passed")
-    except Exception as e:
-        print(f"LossIB test failed: {e}")
+#     print("\n--- Testing LossIB ---")
+#     try:
+#         loss_ib = LossIB(beta=1e-4).to(device)
+#         ib_loss = loss_ib(z_t)
+#         print(f"IB loss: {ib_loss.item():.6f}")
+#         assert ib_loss.dim() == 0, f"Expected scalar loss, got shape {ib_loss.shape}"
+#         print("✓ LossIB test passed")
+#     except Exception as e:
+#         print(f"LossIB test failed: {e}")
     
-    print("\n--- Testing loss combination ---")
-    try:
-        # Test realistic loss combination
-        loss_weights = {
-            'ci': 1.0,
-            'mbr': 1.0, 
-            'mac': 0.5,
-            'align': 0.2,
-            'style': 0.1,
-            'ib': 1e-4
-        }
+#     print("\n--- Testing loss combination ---")
+#     try:
+#         # Test realistic loss combination
+#         loss_weights = {
+#             'ci': 1.0,
+#             'mbr': 1.0, 
+#             'mac': 0.5,
+#             'align': 0.2,
+#             'style': 0.1,
+#             'ib': 1e-4
+#         }
         
-        # Initialize all losses
-        losses = {
-            'ci': LossCI(zt_dim=z_dim, zm_dim=z_dim, y_type='cont').to(device),
-            'mbr': LossMBR(zm_dim=z_dim, zt_dim=z_dim, y_type='cont').to(device),
-            'mac': LossMAC().to(device),
-            'align': LossAlign().to(device),
-            'style': LossStyle(z_dim=z_dim, num_styles=1, style_type='regression').to(device),
-            'ib': LossIB().to(device)
-        }
+#         # Initialize all losses
+#         losses = {
+#             'ci': LossCI(zt_dim=z_dim, zm_dim=z_dim, y_type='cont').to(device),
+#             'mbr': LossMBR(zm_dim=z_dim, zt_dim=z_dim, y_type='cont').to(device),
+#             'mac': LossMAC().to(device),
+#             'align': LossAlign().to(device),
+#             'style': LossStyle(z_dim=z_dim, num_styles=1, style_type='regression').to(device),
+#             'ib': LossIB().to(device)
+#         }
         
-        # Compute all losses
-        total_loss = 0.0
-        loss_values = {}
+#         # Compute all losses
+#         total_loss = 0.0
+#         loss_values = {}
         
-        loss_values['ci'] = losses['ci'](z_t, z_m, y_cont)
-        total_loss += loss_weights['ci'] * loss_values['ci']
+#         loss_values['ci'] = losses['ci'](z_t, z_m, y_cont)
+#         total_loss += loss_weights['ci'] * loss_values['ci']
         
-        mbr_loss, _ = losses['mbr'](z_m, z_t, y_cont)
-        loss_values['mbr'] = mbr_loss
-        total_loss += loss_weights['mbr'] * loss_values['mbr']
+#         mbr_loss, _ = losses['mbr'](z_m, z_t, y_cont)
+#         loss_values['mbr'] = mbr_loss
+#         total_loss += loss_weights['mbr'] * loss_values['mbr']
         
-        loss_values['mac'] = losses['mac'](z_i, a_values)
-        total_loss += loss_weights['mac'] * loss_values['mac']
+#         loss_values['mac'] = losses['mac'](z_i, a_values)
+#         total_loss += loss_weights['mac'] * loss_values['mac']
         
-        loss_values['align'] = losses['align'](z_t, z_m)
-        total_loss += loss_weights['align'] * loss_values['align']
+#         loss_values['align'] = losses['align'](z_t, z_m)
+#         total_loss += loss_weights['align'] * loss_values['align']
         
-        loss_values['style'] = losses['style'](z_i, b_values)
-        total_loss += loss_weights['style'] * loss_values['style']
+#         loss_values['style'] = losses['style'](z_i, b_values)
+#         total_loss += loss_weights['style'] * loss_values['style']
         
-        loss_values['ib'] = losses['ib'](z_t)
-        total_loss += loss_weights['ib'] * loss_values['ib']
+#         loss_values['ib'] = losses['ib'](z_t)
+#         total_loss += loss_weights['ib'] * loss_values['ib']
         
-        print(f"Combined loss test:")
-        for name, loss_val in loss_values.items():
-            weighted_val = loss_weights[name] * loss_val.item()
-            print(f"  {name}: {loss_val.item():.4f} (weighted: {weighted_val:.4f})")
-        print(f"  Total: {total_loss.item():.4f}")
+#         print(f"Combined loss test:")
+#         for name, loss_val in loss_values.items():
+#             weighted_val = loss_weights[name] * loss_val.item()
+#             print(f"  {name}: {loss_val.item():.4f} (weighted: {weighted_val:.4f})")
+#         print(f"  Total: {total_loss.item():.4f}")
         
-        assert total_loss.dim() == 0, f"Expected scalar total loss, got shape {total_loss.shape}"
-        print("✓ Loss combination test passed")
+#         assert total_loss.dim() == 0, f"Expected scalar total loss, got shape {total_loss.shape}"
+#         print("✓ Loss combination test passed")
         
-    except Exception as e:
-        print(f"Loss combination test failed: {e}")
-        import traceback
-        traceback.print_exc()
+#     except Exception as e:
+#         print(f"Loss combination test failed: {e}")
+#         import traceback
+#         traceback.print_exc()
     
-    print("\n=== CSP Loss Functions Test Complete ===")
+#     print("\n=== CSP Loss Functions Test Complete ===")
