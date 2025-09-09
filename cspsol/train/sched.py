@@ -104,28 +104,26 @@ class CosineAnnealingWarmupRestarts(_LRScheduler):
         self.warmup_steps = warmup_steps
         self.gamma = gamma
         
+        # Store base learning rates from optimizer
         self.base_max_lrs = [max_lr or group['lr'] for group in optimizer.param_groups]
         self.max_lrs = self.base_max_lrs.copy()
         
         self.cycle = 0
-        self.step_in_cycle = last_epoch
+        self.step_in_cycle = 0
         
+        # Initialize parent class
         super().__init__(optimizer, last_epoch)
-        
-        self.init_lr()
-    
-    def init_lr(self):
-        """Initialize learning rates."""
-        for param_group, max_lr in zip(self.optimizer.param_groups, self.max_lrs):
-            param_group['lr'] = self.min_lr if self.warmup_steps > 0 else max_lr
     
     def get_lr(self):
         """Compute learning rate for current step."""
-        if self.step_in_cycle == -1:
-            return self.base_lrs
+        if not self._get_lr_called_within_step:
+            warnings.warn("To get the last learning rate computed by the scheduler, "
+                         "please use `get_last_lr()`.", UserWarning)
         
         # Warmup phase
         if self.step_in_cycle < self.warmup_steps:
+            if self.warmup_steps == 0:
+                return self.max_lrs
             warmup_factor = self.step_in_cycle / self.warmup_steps
             return [
                 self.min_lr + (max_lr - self.min_lr) * warmup_factor
@@ -134,14 +132,9 @@ class CosineAnnealingWarmupRestarts(_LRScheduler):
         
         # Cosine annealing phase
         effective_step = self.step_in_cycle - self.warmup_steps
-        cycle_steps = self.first_cycle_steps * (self.cycle_mult ** self.cycle)
-        effective_cycle_steps = cycle_steps - self.warmup_steps
+        effective_cycle_steps = self.first_cycle_steps * (self.cycle_mult ** self.cycle) - self.warmup_steps
         
-        if effective_step >= effective_cycle_steps:
-            # Start new cycle
-            self.cycle += 1
-            self.step_in_cycle = 0
-            self.max_lrs = [max_lr * self.gamma for max_lr in self.max_lrs]
+        if effective_cycle_steps <= 0:
             return self.max_lrs
         
         # Cosine decay
@@ -155,24 +148,34 @@ class CosineAnnealingWarmupRestarts(_LRScheduler):
         """Step the scheduler."""
         if epoch is None:
             epoch = self.last_epoch + 1
+            self.step_in_cycle += 1
+        else:
+            self.step_in_cycle = epoch
+        
+        # Check for cycle restart
+        cycle_length = self.first_cycle_steps * (self.cycle_mult ** self.cycle)
+        if self.step_in_cycle >= cycle_length:
+            self.cycle += 1
+            self.step_in_cycle = 0
+            # Decay max learning rates
+            self.max_lrs = [max_lr * self.gamma for max_lr in self.max_lrs]
         
         self.last_epoch = epoch
         
-        # Number of steps since last call
-        step = epoch - self.last_epoch
+        class _enable_get_lr_call:
+            def __init__(self, o):
+                self.o = o
+            def __enter__(self):
+                self.o._get_lr_called_within_step = True
+                return self
+            def __exit__(self, type, value, traceback):
+                self.o._get_lr_called_within_step = False
         
-        self.step_in_cycle += step
-        cycle_steps = self.first_cycle_steps * (self.cycle_mult ** self.cycle)
-
-        # Advance cycle and adjust learning rates when necessary
-        while self.step_in_cycle >= cycle_steps:
-            self.step_in_cycle -= cycle_steps
-            self.cycle += 1
-            self.max_lrs = [max_lr * self.gamma for max_lr in self.max_lrs]
-            cycle_steps = self.first_cycle_steps * (self.cycle_mult ** self.cycle)
+        with _enable_get_lr_call(self):
+            for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
+                param_group['lr'] = lr
         
-        for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
-            param_group['lr'] = lr
+        self._last_lr = [group['lr'] for group in self.optimizer.param_groups]
 
 
 class PhaseAwareScheduler(_LRScheduler):
@@ -378,7 +381,7 @@ class AdaptiveLRScheduler(_LRScheduler):
         if epoch is None:
             epoch = self.last_epoch + 1
         self.last_epoch = epoch
-        
+
         if metrics is None:
             return
         
@@ -530,6 +533,9 @@ if __name__ == "__main__":
     
     print("\n--- Testing CosineAnnealingWarmupRestarts ---")
     try:
+        # Reset optimizer for clean test
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+        
         scheduler = CosineAnnealingWarmupRestarts(
             optimizer,
             first_cycle_steps=20,
@@ -548,18 +554,26 @@ if __name__ == "__main__":
             if epoch % 10 == 0:
                 print(f"Epoch {epoch:2d}: LR = {current_lr:.6f}")
         
-        # Check warmup
-        assert lrs[0] < lrs[4], "LR should increase during warmup"
-        # Check restarts
-        restart_epochs = [20, 40]
-        for restart_epoch in restart_epochs:
-            if restart_epoch < len(lrs):
-                assert lrs[restart_epoch] > lrs[restart_epoch-1], f"LR should restart at epoch {restart_epoch}"
+        # Check warmup (should start low and increase)
+        print(f"LR progression in warmup: {[f'{lr:.6f}' for lr in lrs[:6]]}")
+        assert lrs[0] < lrs[4], f"LR should increase during warmup: {lrs[0]:.6f} -> {lrs[4]:.6f}"
+        
+        # Check that we reach max LR after warmup
+        # Check that we reach max LR at end of warmup (step 4 for 5 warmup steps)
+        assert abs(lrs[4] - 1e-3) < 1e-5, f"Should reach max LR at end of warmup: {lrs[4]:.6f}"
+
+        # Check cosine decay starts after warmup
+        assert lrs[5] < lrs[4], f"LR should start decaying after warmup: {lrs[4]:.6f} -> {lrs[5]:.6f}"
+        
+        # Check cosine decay happens
+        assert lrs[10] < lrs[5], f"LR should decay after warmup: {lrs[5]:.6f} -> {lrs[10]:.6f}"
         
         print("✓ CosineAnnealingWarmupRestarts test passed")
         
     except Exception as e:
         print(f"✗ CosineAnnealingWarmupRestarts test failed: {e}")
+        import traceback
+        traceback.print_exc()
     
     print("\n--- Testing PhaseAwareScheduler ---")
     try:
@@ -699,14 +713,23 @@ if __name__ == "__main__":
         )
         
         print("LR Schedule preview:")
-        for epoch in range(0, 60, 5):
+        lrs = []
+        for epoch in range(60):
             scheduler.step()
             lr = optimizer.param_groups[0]['lr']
-            print(f"Epoch {epoch:2d}: {lr:.6f}")
+            lrs.append(lr)
+            
+            if epoch % 5 == 0:
+                print(f"Epoch {epoch:2d}: {lr:.6f}")
+        
+        # Verify the schedule is working
+        assert lrs[0] < lrs[4], "Warmup should increase LR"
+        assert lrs[10] < lrs[5], "Cosine decay should occur"
+        assert lrs[30] > lrs[29], "Restart should occur"
         
         print("✓ Integration test passed")
         
     except Exception as e:
         print(f"✗ Integration test failed: {e}")
-    
-    print("\n=== CSP Scheduler Test Complete ===")
+        import traceback
+        traceback.print_exc()

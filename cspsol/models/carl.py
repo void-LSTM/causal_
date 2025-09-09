@@ -486,7 +486,8 @@ class CausalAwareModel(nn.Module):
             if 'ci' in active_losses:
                 print(f"CI loss skipped: active={'ci' in active_losses}, z_T={z_T is not None}, z_M={z_M is not None}, y_target={y_target is not None}")
         # Balance losses if balancer is available
-        if self.balancer is not None and len(computed_losses) > 1:
+        # Balance losses if balancer is available (only during training)
+        if self.balancer is not None and len(computed_losses) > 1 and self.training:
             # Update balancer weights
             shared_params = list(self.encoders.parameters())
             loss_weights = self.balancer.update_weights(
@@ -496,7 +497,7 @@ class CausalAwareModel(nn.Module):
             
             # Compute weighted total loss
             total_loss = sum(loss_weights.get(name, 0.0) * loss_val 
-                           for name, loss_val in computed_losses.items())
+                        for name, loss_val in computed_losses.items())
             
             return {
                 'total_loss': total_loss,
@@ -505,13 +506,20 @@ class CausalAwareModel(nn.Module):
                 **loss_components
             }
         else:
-            # Simple sum if no balancer
+            # Simple sum for validation or when no balancer
             if computed_losses:
                 total_loss = sum(computed_losses.values())
             else:
                 # Ensure device consistency for empty loss
                 device = next(self.parameters()).device
-                total_loss = torch.tensor(0.0, device=device)
+                if self.training:
+                    # During training, create a small loss from model parameters
+                    dummy_loss = sum(p.sum() for p in self.parameters()) * 0.0
+                    total_loss = dummy_loss
+                else:
+                    # During validation, just use a zero tensor
+                    total_loss = torch.tensor(0.0, device=device)
+            
             return {
                 'total_loss': total_loss,
                 **computed_losses,

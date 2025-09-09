@@ -488,9 +488,26 @@ class LossMAC(nn.Module):
         if num_pairs <= 10:  # Too few pairs for reliable correlation
             return torch.tensor(0.0, device=z.device)
         
-        # compute all pairwise differences
-        a_diffs = torch.pdist(a.unsqueeze(1), p=2)
-        z_diffs = torch.pdist(z, p=2)
+        # compute all pairwise differences manually (avoids pdist gradient issues)
+        def manual_pdist(x: torch.Tensor) -> torch.Tensor:
+            """Manual pairwise distance computation with proper gradients."""
+            n = x.shape[0]
+            if n < 2:
+                return torch.empty(0, device=x.device, dtype=x.dtype)
+            
+            # Get all pairs of indices
+            i, j = torch.triu_indices(n, n, offset=1, device=x.device)
+            
+            # Compute distances between pairs
+            if x.dim() == 1:
+                x = x.unsqueeze(1)
+            
+            diffs = x[i] - x[j]
+            distances = torch.norm(diffs, p=2, dim=1)
+            return distances
+
+        a_diffs = manual_pdist(a.unsqueeze(1) if a.dim() == 1 else a)
+        z_diffs = manual_pdist(z)
 
         # sample pairs if necessary
         total_pairs = a_diffs.numel()

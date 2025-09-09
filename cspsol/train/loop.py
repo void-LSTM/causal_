@@ -381,10 +381,11 @@ class CSPTrainer:
                     # Forward pass
                     outputs = self._forward_step(batch, epoch)
                     
-                    # Collect metrics
+                    # Collect metrics - but only track scalar values, not for backprop
                     for key, value in outputs.items():
                         if torch.is_tensor(value) and value.dim() == 0:
-                            epoch_metrics[f'val_{key}'].append(value.item())
+                            # Detach from computation graph to avoid gradient issues
+                            epoch_metrics[f'val_{key}'].append(value.detach().item())
                 
                 except Exception as e:
                     print(f"Error in validation step {batch_idx}: {e}")
@@ -520,7 +521,7 @@ class CSPTrainer:
             all_metrics = {**train_metrics, **val_metrics}
             
             # Update learning rate scheduler
-            if self.scheduler:
+            if self.scheduler and epoch >= self.warmup_epochs:
                 if isinstance(self.scheduler, (optim.lr_scheduler.ReduceLROnPlateau, AdaptiveLRScheduler)):
                     metric_for_scheduler = val_metrics.get('val_total_loss', train_metrics.get('train_total_loss', 0))
                     self.scheduler.step(metric_for_scheduler)

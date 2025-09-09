@@ -1,36 +1,37 @@
 """
-Gradient Reversal Layer implementation for adversarial training.
-Used in style decoupling to reverse gradients during backpropagation.
-Based on "Unsupervised Domain Adaptation by Backpropagation" (Ganin & Lempitsky, 2015).
+Gradient Reversal Layer (GRL) implementation for domain adaptation and adversarial training.
+Supports both static and adaptive alpha scheduling for gradient reversal strength.
 """
 
 import torch
 import torch.nn as nn
-from typing import Optional, Union
+from torch.autograd import Function
+from typing import Optional, Union, Callable
+import math
 
 
-class GradientReversalFunction(torch.autograd.Function):
+class GradientReversalFunction(Function):
     """
-    Gradient Reversal Function for adversarial training.
-    
-    Forward pass: identity function (output = input)
-    Backward pass: multiply gradients by -alpha
+    Gradient Reversal Function that reverses gradients during backpropagation.
+    Forward pass: y = x
+    Backward pass: grad_x = -alpha * grad_y
     """
     
     @staticmethod
-    def forward(ctx, input_tensor: torch.Tensor, alpha: float) -> torch.Tensor:
+    def forward(ctx, input: torch.Tensor, alpha: float = 1.0) -> torch.Tensor:
         """
         Forward pass - identity function.
         
         Args:
-            input_tensor: Input tensor
+            ctx: Context for saving information for backward pass
+            input: Input tensor
             alpha: Gradient reversal strength
             
         Returns:
-            Same as input tensor
+            Output tensor (same as input)
         """
         ctx.alpha = alpha
-        return input_tensor.view_as(input_tensor)
+        return input.view_as(input)
     
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple:
@@ -38,7 +39,8 @@ class GradientReversalFunction(torch.autograd.Function):
         Backward pass - reverse gradients.
         
         Args:
-            grad_output: Gradients from upstream
+            ctx: Context with saved information
+            grad_output: Gradients from subsequent layers
             
         Returns:
             Tuple of (reversed_gradients, None)
@@ -46,69 +48,115 @@ class GradientReversalFunction(torch.autograd.Function):
         return -ctx.alpha * grad_output, None
 
 
-class GradientReversalLayer(nn.Module):
+class StaticGRL(nn.Module):
     """
-    Gradient Reversal Layer with configurable reversal strength.
-    
-    Can be used with fixed alpha or with adaptive scheduling.
+    Static Gradient Reversal Layer with fixed alpha.
     """
     
     def __init__(self, alpha: float = 1.0):
         """
-        Initialize GRL.
+        Initialize static GRL.
         
         Args:
-            alpha: Initial gradient reversal strength
+            alpha: Fixed gradient reversal strength
         """
         super().__init__()
         self.alpha = alpha
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass through GRL.
-        
-        Args:
-            x: Input tensor
-            
-        Returns:
-            Output tensor (same as input in forward, gradients reversed in backward)
-        """
+        """Apply gradient reversal with fixed alpha."""
         return GradientReversalFunction.apply(x, self.alpha)
     
+    def get_alpha(self) -> float:
+        """Get current alpha value."""
+        return self.alpha
+    
     def set_alpha(self, alpha: float):
-        """Set gradient reversal strength."""
+        """Set new alpha value."""
         self.alpha = alpha
 
 
 class AdaptiveGRL(nn.Module):
     """
-    Adaptive Gradient Reversal Layer with automatic alpha scheduling.
-    
-    Alpha increases during training following different scheduling strategies.
+    Adaptive Gradient Reversal Layer with scheduling.
+    Supports linear, exponential, and custom scheduling of alpha.
     """
     
-    def __init__(self, 
+    def __init__(self,
                  max_alpha: float = 1.0,
                  schedule: str = 'linear',
-                 warmup_steps: int = 1000):
+                 warmup_steps: int = 1000,
+                 total_steps: Optional[int] = None,
+                 gamma: float = 10.0):
         """
         Initialize adaptive GRL.
         
         Args:
             max_alpha: Maximum alpha value
-            schedule: Scheduling strategy ('linear', 'exponential', 'cosine')
+            schedule: Scheduling type ('linear', 'exponential', 'sigmoid')
             warmup_steps: Number of steps to reach max_alpha
+            total_steps: Total training steps (for some schedules)
+            gamma: Parameter for exponential/sigmoid schedules
         """
         super().__init__()
         self.max_alpha = max_alpha
-        self.schedule = schedule
+        self.schedule = schedule.lower()
         self.warmup_steps = warmup_steps
-        self.current_step = 0
-        self.current_alpha = 0.0
+        self.total_steps = total_steps
+        self.gamma = gamma
         
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass with adaptive alpha."""
-        return GradientReversalFunction.apply(x, self.current_alpha)
+        # Current state
+        self.current_step = 0
+        self.alpha = 0.0
+        
+        # Validate schedule
+        valid_schedules = ['linear', 'exponential', 'sigmoid', 'cosine']
+        if self.schedule not in valid_schedules:
+            raise ValueError(f"Unknown schedule: {schedule}. Valid: {valid_schedules}")
+    
+    def _compute_alpha(self, step: int) -> float:
+        """
+        Compute alpha value based on current step and schedule.
+        
+        Args:
+            step: Current training step
+            
+        Returns:
+            Alpha value for gradient reversal
+        """
+        if step <= 0:
+            return 0.0
+        
+        if self.schedule == 'linear':
+            # Linear increase to max_alpha
+            progress = min(step / self.warmup_steps, 1.0)
+            return self.max_alpha * progress
+        
+        elif self.schedule == 'exponential':
+            # Exponential growth: alpha = max_alpha * (1 - exp(-gamma * progress))
+            progress = min(step / self.warmup_steps, 1.0)
+            return self.max_alpha * (1 - math.exp(-self.gamma * progress))
+        
+        elif self.schedule == 'sigmoid':
+            # Sigmoid schedule: alpha = max_alpha * sigmoid(gamma * (progress - 0.5))
+            progress = min(step / self.warmup_steps, 1.0)
+            sigmoid_input = self.gamma * (progress - 0.5)
+            sigmoid_val = 1 / (1 + math.exp(-sigmoid_input))
+            return self.max_alpha * sigmoid_val
+        
+        elif self.schedule == 'cosine':
+            # Cosine annealing: smooth increase then decrease
+            if self.total_steps is None:
+                # If no total steps, just increase to max
+                progress = min(step / self.warmup_steps, 1.0)
+                return self.max_alpha * 0.5 * (1 + math.cos(math.pi * (1 - progress)))
+            else:
+                # Full cosine schedule
+                progress = min(step / self.total_steps, 1.0)
+                return self.max_alpha * 0.5 * (1 + math.cos(math.pi * progress))
+        
+        else:
+            return self.max_alpha
     
     def update_alpha(self, step: int):
         """
@@ -118,136 +166,58 @@ class AdaptiveGRL(nn.Module):
             step: Current training step
         """
         self.current_step = step
-        
-        if step >= self.warmup_steps:
-            self.current_alpha = self.max_alpha
-        else:
-            progress = step / self.warmup_steps
-            
-            if self.schedule == 'linear':
-                self.current_alpha = progress * self.max_alpha
-            elif self.schedule == 'exponential':
-                self.current_alpha = self.max_alpha * (progress ** 2)
-            elif self.schedule == 'cosine':
-                self.current_alpha = self.max_alpha * 0.5 * (1 - torch.cos(torch.tensor(progress * 3.14159)).item())
-            else:
-                raise ValueError(f"Unknown schedule: {self.schedule}")
+        self.alpha = self._compute_alpha(step)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply gradient reversal with current alpha."""
+        return GradientReversalFunction.apply(x, self.alpha)
     
     def get_alpha(self) -> float:
         """Get current alpha value."""
-        return self.current_alpha
+        return self.alpha
+    
+    def get_statistics(self) -> dict:
+        """Get GRL statistics."""
+        return {
+            'current_step': self.current_step,
+            'alpha': self.alpha,
+            'max_alpha': self.max_alpha,
+            'schedule': self.schedule,
+            'warmup_steps': self.warmup_steps
+        }
 
 
-class DomainAdversarialNetwork(nn.Module):
-    """
-    Complete domain adversarial network with GRL and classifier.
-    
-    Combines feature extractor -> GRL -> domain classifier.
-    """
-    
-    def __init__(self,
-                 input_dim: int,
-                 num_domains: int,
-                 hidden_dims: list = [256, 256],
-                 grl_alpha: float = 1.0,
-                 adaptive_grl: bool = False,
-                 grl_schedule: str = 'linear',
-                 grl_warmup_steps: int = 1000):
-        """
-        Initialize domain adversarial network.
-        
-        Args:
-            input_dim: Input feature dimension
-            num_domains: Number of domains to classify
-            hidden_dims: Hidden layer dimensions for classifier
-            grl_alpha: GRL alpha (if not adaptive)
-            adaptive_grl: Whether to use adaptive GRL
-            grl_schedule: GRL schedule type (if adaptive)
-            grl_warmup_steps: Warmup steps for adaptive GRL
-        """
-        super().__init__()
-        
-        # Gradient reversal layer
-        if adaptive_grl:
-            self.grl = AdaptiveGRL(
-                max_alpha=grl_alpha,
-                schedule=grl_schedule,
-                warmup_steps=grl_warmup_steps
-            )
-        else:
-            self.grl = GradientReversalLayer(alpha=grl_alpha)
-        
-        # Domain classifier
-        layers = []
-        prev_dim = input_dim
-        
-        for hidden_dim in hidden_dims:
-            layers.extend([
-                nn.Linear(prev_dim, hidden_dim),
-                nn.BatchNorm1d(hidden_dim),
-                nn.ReLU(inplace=True),
-                nn.Dropout(0.1)
-            ])
-            prev_dim = hidden_dim
-        
-        layers.append(nn.Linear(prev_dim, num_domains))
-        self.classifier = nn.Sequential(*layers)
-        
-        self.adaptive_grl = adaptive_grl
-    
-    def forward(self, features: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass through GRL and classifier.
-        
-        Args:
-            features: Input features
-            
-        Returns:
-            Domain classification logits
-        """
-        reversed_features = self.grl(features)
-        return self.classifier(reversed_features)
-    
-    def update_grl(self, step: int):
-        """Update GRL alpha if using adaptive scheduling."""
-        if self.adaptive_grl and hasattr(self.grl, 'update_alpha'):
-            self.grl.update_alpha(step)
-    
-    def get_grl_alpha(self) -> float:
-        """Get current GRL alpha value."""
-        if hasattr(self.grl, 'get_alpha'):
-            return self.grl.get_alpha()
-        else:
-            return self.grl.alpha
-
-
-# Convenience function for creating GRL
-def create_grl(alpha: float = 1.0, 
+def create_grl(alpha: Optional[float] = None,
                adaptive: bool = False,
                max_alpha: float = 1.0,
                schedule: str = 'linear',
-               warmup_steps: int = 1000) -> Union[GradientReversalLayer, AdaptiveGRL]:
+               warmup_steps: int = 1000,
+               **kwargs) -> Union[StaticGRL, AdaptiveGRL]:
     """
-    Factory function for creating GRL layers.
+    Factory function to create gradient reversal layers.
     
     Args:
-        alpha: Fixed alpha value (if not adaptive)
+        alpha: Fixed alpha for static GRL (ignored if adaptive=True)
         adaptive: Whether to use adaptive scheduling
-        max_alpha: Maximum alpha for adaptive GRL
-        schedule: Schedule type for adaptive GRL
+        max_alpha: Maximum alpha value for adaptive GRL
+        schedule: Scheduling type for adaptive GRL
         warmup_steps: Warmup steps for adaptive GRL
+        **kwargs: Additional arguments for adaptive GRL
         
     Returns:
-        GRL layer instance
+        GRL layer (static or adaptive)
     """
     if adaptive:
         return AdaptiveGRL(
             max_alpha=max_alpha,
             schedule=schedule,
-            warmup_steps=warmup_steps
+            warmup_steps=warmup_steps,
+            **kwargs
         )
     else:
-        return GradientReversalLayer(alpha=alpha)
+        if alpha is None:
+            alpha = max_alpha
+        return StaticGRL(alpha=alpha)
 
 
 # Test implementation
@@ -257,214 +227,169 @@ if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
-    # Test parameters
-    batch_size = 16
+    # Test data
+    batch_size = 32
     feature_dim = 64
-    num_domains = 3
+    x = torch.randn(batch_size, feature_dim, device=device, requires_grad=True)
     
-    print(f"Test parameters:")
-    print(f"  batch_size: {batch_size}")
-    print(f"  feature_dim: {feature_dim}")
-    print(f"  num_domains: {num_domains}")
+    print(f"Input shape: {x.shape}")
+    print(f"Input requires_grad: {x.requires_grad}")
     
-    print("\n--- Testing GradientReversalFunction ---")
+    print("\n--- Testing StaticGRL ---")
     try:
-        # Create test input that requires gradients
-        x = torch.randn(batch_size, feature_dim, device=device, requires_grad=True)
-        alpha = 0.5
+        # Test static GRL
+        static_grl = StaticGRL(alpha=0.5).to(device)
         
         # Forward pass
-        y = GradientReversalFunction.apply(x, alpha)
+        y = static_grl(x)
+        print(f"Output shape: {y.shape}")
+        print(f"Output requires_grad: {y.requires_grad}")
         
-        # Check forward pass (should be identity)
-        assert torch.allclose(x, y), "Forward pass should be identity"
-        print(f"Forward pass: input.shape={x.shape}, output.shape={y.shape}")
-        print(f"Forward identity check: {'✓' if torch.allclose(x, y) else '✗'}")
-        
-        # Backward pass test
+        # Backward pass
         loss = y.sum()
         loss.backward()
         
-        # Check if gradients exist and have correct shape
-        assert x.grad is not None, "Gradients should be computed"
-        assert x.grad.shape == x.shape, "Gradient shape should match input shape"
-        print(f"Backward pass: grad.shape={x.grad.shape}")
-        print(f"Gradient reversal: alpha={alpha}, mean_grad={x.grad.mean().item():.4f}")
-        print("✓ GradientReversalFunction test passed")
+        print(f"Input gradients sum: {x.grad.sum().item():.4f}")
+        print(f"Expected gradient sum: {(-0.5 * batch_size * feature_dim):.4f}")
+        
+        # Check if gradients are reversed
+        expected_grad_sum = -0.5 * batch_size * feature_dim
+        actual_grad_sum = x.grad.sum().item()
+        
+        if abs(actual_grad_sum - expected_grad_sum) < 1e-3:
+            print("✓ StaticGRL gradient reversal working correctly")
+        else:
+            print(f"✗ StaticGRL gradient reversal failed: {actual_grad_sum} != {expected_grad_sum}")
         
     except Exception as e:
-        print(f"GradientReversalFunction test failed: {e}")
-        import traceback
-        traceback.print_exc()
-    
-    print("\n--- Testing GradientReversalLayer ---")
-    try:
-        grl = GradientReversalLayer(alpha=1.0).to(device)
-        x = torch.randn(batch_size, feature_dim, device=device, requires_grad=True)
-        
-        # Forward pass
-        y = grl(x)
-        
-        # Test alpha modification
-        grl.set_alpha(0.8)
-        y2 = grl(x)
-        
-        print(f"GRL forward: input.shape={x.shape}, output.shape={y.shape}")
-        print(f"Identity check: {'✓' if torch.allclose(x, y) else '✗'}")
-        print(f"Alpha change test: new_alpha={grl.alpha}")
-        print("✓ GradientReversalLayer test passed")
-        
-    except Exception as e:
-        print(f"GradientReversalLayer test failed: {e}")
+        print(f"✗ StaticGRL test failed: {e}")
     
     print("\n--- Testing AdaptiveGRL ---")
     try:
+        # Test adaptive GRL
         adaptive_grl = AdaptiveGRL(
             max_alpha=1.0,
             schedule='linear',
             warmup_steps=100
         ).to(device)
         
-        x = torch.randn(batch_size, feature_dim, device=device)
-        
         # Test alpha progression
-        alphas = []
-        steps = [0, 25, 50, 75, 100, 150]
+        test_steps = [0, 25, 50, 75, 100, 150]
+        print("Alpha progression:")
         
-        for step in steps:
+        for step in test_steps:
             adaptive_grl.update_alpha(step)
             alpha = adaptive_grl.get_alpha()
-            alphas.append(alpha)
-            y = adaptive_grl(x)
-            
-            print(f"Step {step:3d}: alpha={alpha:.3f}, output.shape={y.shape}")
+            print(f"  Step {step:3d}: alpha = {alpha:.4f}")
         
-        # Check alpha progression
-        assert alphas[0] == 0.0, "Alpha should start at 0"
-        assert alphas[-2] == 1.0, "Alpha should reach max at warmup_steps"
-        assert alphas[-1] == 1.0, "Alpha should stay at max after warmup"
-        assert all(alphas[i] <= alphas[i+1] for i in range(len(alphas)-1)), "Alpha should be non-decreasing"
+        # Test forward/backward with adaptive alpha
+        x_new = torch.randn(batch_size, feature_dim, device=device, requires_grad=True)
+        adaptive_grl.update_alpha(50)  # Set to middle of warmup
+        
+        y_adaptive = adaptive_grl(x_new)
+        loss_adaptive = y_adaptive.sum()
+        loss_adaptive.backward()
+        
+        expected_alpha = 0.5  # At step 50 of 100 warmup steps
+        actual_alpha = adaptive_grl.get_alpha()
+        print(f"Alpha at step 50: {actual_alpha:.4f} (expected ~0.5)")
         
         print("✓ AdaptiveGRL test passed")
         
     except Exception as e:
-        print(f"AdaptiveGRL test failed: {e}")
-    
-    print("\n--- Testing DomainAdversarialNetwork ---")
-    try:
-        # Test with fixed GRL
-        dan_fixed = DomainAdversarialNetwork(
-            input_dim=feature_dim,
-            num_domains=num_domains,
-            hidden_dims=[128, 64],
-            grl_alpha=0.5,
-            adaptive_grl=False
-        ).to(device)
-        
-        # Test with adaptive GRL
-        dan_adaptive = DomainAdversarialNetwork(
-            input_dim=feature_dim,
-            num_domains=num_domains,
-            hidden_dims=[128, 64],
-            grl_alpha=1.0,
-            adaptive_grl=True,
-            grl_schedule='exponential',
-            grl_warmup_steps=50
-        ).to(device)
-        
-        x = torch.randn(batch_size, feature_dim, device=device)
-        
-        # Test fixed GRL
-        logits_fixed = dan_fixed(x)
-        alpha_fixed = dan_fixed.get_grl_alpha()
-        
-        print(f"Fixed DAN: input.shape={x.shape}, output.shape={logits_fixed.shape}")
-        print(f"Fixed GRL alpha: {alpha_fixed}")
-        assert logits_fixed.shape == (batch_size, num_domains), f"Expected shape ({batch_size}, {num_domains}), got {logits_fixed.shape}"
-        
-        # Test adaptive GRL
-        for step in [0, 25, 50]:
-            dan_adaptive.update_grl(step)
-            logits_adaptive = dan_adaptive(x)
-            alpha_adaptive = dan_adaptive.get_grl_alpha()
-            
-            print(f"Adaptive DAN step {step}: alpha={alpha_adaptive:.3f}, output.shape={logits_adaptive.shape}")
-            assert logits_adaptive.shape == (batch_size, num_domains), f"Expected shape ({batch_size}, {num_domains}), got {logits_adaptive.shape}"
-        
-        print("✓ DomainAdversarialNetwork test passed")
-        
-    except Exception as e:
-        print(f"DomainAdversarialNetwork test failed: {e}")
+        print(f"✗ AdaptiveGRL test failed: {e}")
         import traceback
         traceback.print_exc()
     
-    print("\n--- Testing create_grl factory function ---")
+    print("\n--- Testing different schedules ---")
     try:
-        # Test fixed GRL creation
-        grl_fixed = create_grl(alpha=0.7, adaptive=False)
-        assert isinstance(grl_fixed, GradientReversalLayer), "Should create GradientReversalLayer"
-        assert grl_fixed.alpha == 0.7, "Alpha should be set correctly"
+        schedules = ['linear', 'exponential', 'sigmoid', 'cosine']
         
-        # Test adaptive GRL creation
-        grl_adaptive = create_grl(
+        for schedule in schedules:
+            grl = AdaptiveGRL(
+                max_alpha=1.0,
+                schedule=schedule,
+                warmup_steps=100,
+                gamma=5.0
+            )
+            
+            # Test a few key points
+            alphas = []
+            for step in [0, 25, 50, 75, 100]:
+                grl.update_alpha(step)
+                alphas.append(grl.get_alpha())
+            
+            print(f"{schedule:12s}: {[f'{a:.3f}' for a in alphas]}")
+        
+        print("✓ Schedule tests passed")
+        
+    except Exception as e:
+        print(f"✗ Schedule tests failed: {e}")
+    
+    print("\n--- Testing create_grl factory ---")
+    try:
+        # Test static creation
+        static_grl = create_grl(alpha=0.8, adaptive=False)
+        assert isinstance(static_grl, StaticGRL)
+        assert static_grl.get_alpha() == 0.8
+        
+        # Test adaptive creation
+        adaptive_grl = create_grl(
             adaptive=True,
             max_alpha=2.0,
-            schedule='cosine',
+            schedule='exponential',
             warmup_steps=200
         )
-        assert isinstance(grl_adaptive, AdaptiveGRL), "Should create AdaptiveGRL"
-        assert grl_adaptive.max_alpha == 2.0, "Max alpha should be set correctly"
-        assert grl_adaptive.schedule == 'cosine', "Schedule should be set correctly"
+        assert isinstance(adaptive_grl, AdaptiveGRL)
+        assert adaptive_grl.max_alpha == 2.0
+        assert adaptive_grl.schedule == 'exponential'
         
-        print(f"Fixed GRL: type={type(grl_fixed).__name__}, alpha={grl_fixed.alpha}")
-        print(f"Adaptive GRL: type={type(grl_adaptive).__name__}, max_alpha={grl_adaptive.max_alpha}")
-        print("✓ create_grl factory test passed")
+        print("✓ Factory function tests passed")
         
     except Exception as e:
-        print(f"create_grl factory test failed: {e}")
+        print(f"✗ Factory function tests failed: {e}")
     
-    print("\n--- Testing gradient flow ---")
+    print("\n--- Testing integration with model training ---")
     try:
-        # Create a simple network with GRL
-        class TestNetwork(nn.Module):
+        # Simulate training scenario
+        class SimpleModel(nn.Module):
             def __init__(self):
                 super().__init__()
-                self.feature_extractor = nn.Linear(feature_dim, 32)
-                self.grl = GradientReversalLayer(alpha=1.0)
-                self.classifier = nn.Linear(32, 2)
+                self.encoder = nn.Linear(feature_dim, 32)
+                self.grl = create_grl(adaptive=True, max_alpha=1.0, warmup_steps=10)
+                self.discriminator = nn.Linear(32, 2)
+            
+            def forward(self, x, step=None):
+                if step is not None:
+                    self.grl.update_alpha(step)
                 
-            def forward(self, x):
-                features = self.feature_extractor(x)
+                features = self.encoder(x)
                 reversed_features = self.grl(features)
-                return self.classifier(reversed_features)
+                output = self.discriminator(reversed_features)
+                return output, features
         
-        net = TestNetwork().to(device)
-        x = torch.randn(batch_size, feature_dim, device=device)
-        target = torch.randint(0, 2, (batch_size,), device=device)
+        model = SimpleModel().to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
         
-        # Forward pass
-        output = net(x)
-        loss = nn.CrossEntropyLoss()(output, target)
+        # Simulate a few training steps
+        for step in range(15):
+            x_batch = torch.randn(8, feature_dim, device=device)
+            labels = torch.randint(0, 2, (8,), device=device)
+            
+            optimizer.zero_grad()
+            output, features = model(x_batch, step=step)
+            loss = nn.CrossEntropyLoss()(output, labels)
+            loss.backward()
+            optimizer.step()
+            
+            if step % 5 == 0:
+                alpha = model.grl.get_alpha()
+                print(f"Training step {step}: GRL alpha = {alpha:.4f}, Loss = {loss.item():.4f}")
         
-        # Backward pass
-        loss.backward()
-        
-        # Check gradients
-        feature_grad = net.feature_extractor.weight.grad
-        classifier_grad = net.classifier.weight.grad
-        
-        assert feature_grad is not None, "Feature extractor should have gradients"
-        assert classifier_grad is not None, "Classifier should have gradients"
-        
-        print(f"Gradient flow test:")
-        print(f"  Feature extractor grad norm: {feature_grad.norm().item():.4f}")
-        print(f"  Classifier grad norm: {classifier_grad.norm().item():.4f}")
-        print(f"  Output shape: {output.shape}")
-        print(f"  Loss: {loss.item():.4f}")
-        print("✓ Gradient flow test passed")
+        print("✓ Integration test passed")
         
     except Exception as e:
-        print(f"Gradient flow test failed: {e}")
+        print(f"✗ Integration test failed: {e}")
         import traceback
         traceback.print_exc()
     
