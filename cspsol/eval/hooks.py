@@ -125,7 +125,18 @@ class RepresentationExtractor:
                 except Exception as e:
                     print(f"Warning: Could not process metadata {key}: {e}")
         
-        return {**final_representations, **final_metadata}
+        # Ensure critical arrays share the same length
+        result = {**final_representations, **final_metadata}
+        keys_to_align = ['z_M', 'z_T', 'Y_star']
+        arrays = [result.get(k) for k in keys_to_align if result.get(k) is not None]
+        if len(arrays) == len(keys_to_align):
+            min_len = min(a.shape[0] for a in arrays)
+            for k in keys_to_align:
+                arr = result[k]
+                if arr.shape[0] != min_len:
+                    result[k] = arr[:min_len]
+
+        return result
     
     def save_representations(self, 
                            representations: Dict[str, np.ndarray],
@@ -326,17 +337,46 @@ class CSPMetricsComputer:
             # Mock implementation - replace with actual CSPBench call
             from sklearn.metrics import mutual_info_score
             from sklearn.preprocessing import KBinsDiscretizer
-            
+            # Reduce dimensionality to 1D per sample if needed
+            if z_M.ndim > 1:
+                z_M = z_M[:, 0]
+            if z_T.ndim > 1:
+                z_T = z_T[:, 0]
+            if Y.ndim > 1:
+                Y = Y[:, 0]
+
+            # Ensure equal lengths
+            min_len = min(len(z_M), len(z_T), len(Y))
+            z_M = z_M[:min_len]
+            z_T = z_T[:min_len]
+            Y = Y[:min_len]
+
             # Discretize for mutual information computation
             discretizer = KBinsDiscretizer(n_bins=10, encode='ordinal', strategy='uniform')
             
-            z_M_discrete = discretizer.fit_transform(z_M.reshape(-1, 1)).flatten()
-            z_T_discrete = discretizer.fit_transform(z_T.reshape(-1, 1)).flatten()
-            Y_discrete = discretizer.fit_transform(Y.reshape(-1, 1)).flatten()
-            
-            # Compute mutual information terms
-            I_M_Y = mutual_info_score(z_M_discrete, Y_discrete)
-            I_T_Y = mutual_info_score(z_T_discrete, Y_discrete)
+            # Ensure arrays have shape (n_samples, n_features)
+            z_M = np.atleast_2d(z_M)
+            z_T = np.atleast_2d(z_T)
+            Y = np.asarray(Y).reshape(-1)
+
+            if z_M.shape[0] != Y.shape[0]:
+                z_M = z_M.T
+            if z_T.shape[0] != Y.shape[0]:
+                z_T = z_T.T
+
+            z_M_discrete = discretizer.fit_transform(z_M)
+            z_T_discrete = discretizer.fit_transform(z_T)
+            Y_discrete = discretizer.fit_transform(Y.reshape(-1, 1)).reshape(-1)
+
+            # Compute mutual information per feature and aggregate
+            I_M_Y = np.mean([
+                mutual_info_score(z_M_discrete[:, i], Y_discrete)
+                for i in range(z_M_discrete.shape[1])
+            ])
+            I_T_Y = np.mean([
+                mutual_info_score(z_T_discrete[:, i], Y_discrete)
+                for i in range(z_T_discrete.shape[1])
+            ])
             
             # MBRI: I(M;Y) / (I(M;Y) + I(T;Y|M))
             # Simplified as I(M;Y) / (I(M;Y) + I(T;Y))
@@ -433,7 +473,16 @@ class CSPMetricsComputer:
         
         # Compute MBRI if we have required data
         if z_M is not None and z_T is not None and Y_star is not None:
-            metrics['MBRI'] = self.compute_mbri(z_M, z_T, Y_star)
+            # Align array lengths to avoid sample mismatch
+            min_len = min(len(z_M), len(z_T), len(Y_star))
+            if not (len(z_M) == len(z_T) == len(Y_star)):
+                warnings.warn(
+                    "MBRI inputs have inconsistent lengths; trimming to match"  # noqa: E501
+                )
+            z_M_aligned = z_M[:min_len]
+            z_T_aligned = z_T[:min_len]
+            Y_aligned = Y_star[:min_len]
+            metrics['MBRI'] = self.compute_mbri(z_M_aligned, z_T_aligned, Y_aligned)
         
         # Compute MAC if we have required data
         if z_img is not None and a_semantic is not None:

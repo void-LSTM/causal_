@@ -459,6 +459,8 @@ class CSPDataModule:
         self.normalize_tabular = normalize_tabular
         self.max_samples = max_samples
         self.val_split = val_split
+        self.y_mean: Optional[float] = None
+        self.y_std: Optional[float] = None
         
         # Initialize datasets
         self.setup()
@@ -522,6 +524,17 @@ class CSPDataModule:
         fitted_scaler = temp_train.float_scaler if self.normalize_tabular else None
         valid_cols = getattr(temp_train, 'valid_float_cols', None) if self.normalize_tabular else None
         
+        # Compute mean and std of Y_star for standardization
+        try:
+            y_values = temp_train._get_float_column('Y_star', temp_train.split_indices)
+            self.y_mean = float(np.mean(y_values))
+            y_std = float(np.std(y_values))
+            self.y_std = y_std if y_std > 1e-8 else 1.0
+        except Exception as e:
+            warnings.warn(f"Failed to compute Y_star statistics: {e}")
+            self.y_mean = 0.0
+            self.y_std = 1.0
+
         # Create datasets with shared scaler and valid columns
         common_kwargs = {
             'data_dir': self.data_dir,
@@ -617,6 +630,9 @@ class CSPDataModule:
             else:
                 # Stack tensors normally
                 collated[key] = torch.stack([batch[i][key] for i in range(len(batch))])
+        if 'Y_star' in collated and collated['Y_star'] is not None:
+            if self.y_mean is not None and self.y_std is not None:
+                collated['Y_star'] = (collated['Y_star'] - self.y_mean) / self.y_std
         
         return collated
     

@@ -23,9 +23,10 @@ import numpy as np
 from pathlib import Path
 import json
 from cspsol.train.sched import AdaptiveLRScheduler
-
+from ..eval.hooks import RepresentationExtractor, CSPMetricsComputer
 from ..models.carl import CausalAwareModel
 from ..data.datamodule import CSPDataModule
+
 
 
 class CSPTrainer:
@@ -399,6 +400,28 @@ class CSPTrainer:
         
         return epoch_avg
     
+    def compute_structural_metrics(self) -> Dict[str, float]:
+        """Compute CIP, CSI, MBRI, and MAC metrics on validation data."""
+        try:
+            val_loader = self.datamodule.val_dataloader()
+            extractor = RepresentationExtractor(self.model, self.device)
+            representations = extractor.extract_representations(val_loader)
+            metrics_computer = CSPMetricsComputer(self.model.scenario)
+            metrics = metrics_computer.compute_all_metrics(representations)
+            results = {}
+            if 'CIP' in metrics:
+                results['CIP'] = metrics['CIP'].get('cip_score')
+            if 'CSI' in metrics:
+                results['CSI'] = metrics['CSI'].get('csi_score')
+            if 'MBRI' in metrics:
+                results['MBRI'] = metrics['MBRI'].get('mbri_score')
+            if 'MAC' in metrics:
+                results['MAC'] = metrics['MAC'].get('mac_score')
+            return results
+        except Exception as e:
+            print(f"Error computing structural metrics: {e}")
+            return {}
+    
     def _check_early_stopping(self, val_metrics: Dict[str, float]) -> bool:
         """Check early stopping condition."""
         if self.early_stopping_metric not in val_metrics:
@@ -517,6 +540,11 @@ class CSPTrainer:
             else:
                 val_metrics = {}
             
+            # Structural metrics (CIP, CSI, MBRI, MAC)
+            struct_metrics = self.compute_structural_metrics()
+            for key, value in struct_metrics.items():
+                val_metrics[f'val_{key.lower()}'] = value
+
             # Combine metrics
             all_metrics = {**train_metrics, **val_metrics}
             
@@ -549,6 +577,15 @@ class CSPTrainer:
             print(f"Train loss: {train_metrics.get('train_total_loss', 0):.4f}")
             if val_metrics:
                 print(f"Val loss:   {val_metrics.get('val_total_loss', 0):.4f}")
+            if struct_metrics:
+                print(
+                    "CIP: {CIP:.4f} | CSI: {CSI:.4f} | MBRI: {MBRI:.4f} | MAC: {MAC:.4f}".format(
+                        CIP=struct_metrics.get('CIP', float('nan')),
+                        CSI=struct_metrics.get('CSI', float('nan')),
+                        MBRI=struct_metrics.get('MBRI', float('nan')),
+                        MAC=struct_metrics.get('MAC', float('nan')),
+                    )
+                )
             print(f"Best metric: {self.best_metric:.4f} (patience: {self.patience_counter}/{self.early_stopping_patience})")
             
             # Early stopping
